@@ -1,5 +1,24 @@
+# Entorno virtual
 .venv/
+venv/
+env/
+
+# Caché de Python
 __pycache__/
+*.pyc
+*.pyo
+
+# Datos sensibles (¡Tus API Keys!)
 .env
+
+# Base de datos local e historiales
 trades.db
 *.log
+.database/
+
+# Archivos del sistema u otros editores
+.DS_Store
+.vscode/
+
+# Archivos de test temporales
+test_trades_temp.db
