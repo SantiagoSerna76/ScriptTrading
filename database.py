@@ -390,3 +390,47 @@ class TradeDatabase:
         finally:
             conn.close()
 
+    def get_consecutive_losses(self, symbol: str) -> int:
+        """Cuenta cuántas pérdidas consecutivas lleva un símbolo."""
+        conn = self._conn()
+        try:
+            c = conn.cursor()
+            c.execute("""
+                SELECT profit_loss FROM trades 
+                WHERE symbol = ? AND status = 'CLOSED' 
+                ORDER BY exit_time DESC LIMIT 10
+            """, (symbol,))
+            rows = c.fetchall()
+            losses = 0
+            for r in rows:
+                if r[0] < 0:
+                    losses += 1
+                else:
+                    break
+            return losses
+        except Exception as e:
+            logger.error(f"Error contando pérdidas consecutivas para {symbol}: {e}")
+            return 0
+        finally:
+            conn.close()
+
+    def get_last_exit_time(self, symbol: str) -> float:
+        """Devuelve el timestamp de la última vez que se cerró un trade de este símbolo."""
+        conn = self._conn()
+        try:
+            c = conn.cursor()
+            c.execute("""
+                SELECT exit_time FROM trades 
+                WHERE symbol = ? AND status = 'CLOSED' 
+                ORDER BY exit_time DESC LIMIT 1
+            """, (symbol,))
+            row = c.fetchone()
+            if row and row[0]:
+                return datetime.fromisoformat(row[0]).timestamp()
+            return 0.0
+        except Exception as e:
+            logger.error(f"Error obteniendo last exit time para {symbol}: {e}")
+            return 0.0
+        finally:
+            conn.close()
+

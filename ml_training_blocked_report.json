@@ -1,0 +1,17 @@
+{
+  "quality": {
+    "total_trades": 0,
+    "wins": 0,
+    "losses": 0,
+    "win_rate": 0.0,
+    "gross_profit": 0.0,
+    "gross_loss": 0.0,
+    "profit_factor": 0.0,
+    "total_pl": 0.0
+  },
+  "issues": [
+    "menos de 30 trades cerrados",
+    "win rate 0.0% < 45%",
+    "clases insuficientes: wins=0, losses=0 (m\u00ednimo 5 por clase)"
+  ]
+}

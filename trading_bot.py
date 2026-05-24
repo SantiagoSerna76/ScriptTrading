@@ -9,6 +9,7 @@ import logging
 import sys
 import time
 from datetime import datetime
+from pathlib import Path
 from typing import Dict, Optional
 
 from config import (
@@ -17,13 +18,16 @@ from config import (
     MAX_OPEN_POSITIONS, MIN_BUY_COOLDOWN_S,
     MAX_DAILY_LOSS_USDT, MAX_DAILY_TRADES,
     MIN_ORDER_NOTIONAL, KLINES_LIMIT, MIN_HOLD_HOURS,
-    PAPER_TRADING, USE_TESTNET, TRADING_FEE_RATE,
+    PAPER_TRADING, USE_TESTNET, TRADING_FEE_RATE, PARTIAL_TP_PCT, ADX_MIN,
+    RELAXED_MACRO_SYMBOLS, ENTRY_SYMBOLS, PROXY_URL
 )
 from binance_api import BinanceAPI, parse_klines_to_dataframe
 from strategy import StrategySignals, RiskManager, TrailingStopManager
 from mtf_analyzer import MultiTimeframeAnalyzer
 from microstructure import OrderBookAnalyzer
 from database import TradeDatabase
+from notifier import TelegramNotifier
+from ml_signal import MLSignalFilter
 
 # ── Ajuste de Codificación Consola (Windows) ──────────────────────────────────
 if sys.platform.startswith("win"):
@@ -43,6 +47,7 @@ logging.basicConfig(
     ],
 )
 logger = logging.getLogger(__name__)
+PAUSE_SIGNAL_FILE = ".bot_pause_signal"
 
 def round_step(value: float, step: float) -> float:
     """Redondea un valor hacia abajo al paso (step) especificado."""
@@ -56,13 +61,15 @@ class TradingBot:
 
     def __init__(self):
         self.paper_trading = PAPER_TRADING
-        self.api      = BinanceAPI(API_KEY, SECRET_KEY, use_testnet=USE_TESTNET)
+        self.api      = BinanceAPI(API_KEY, SECRET_KEY, use_testnet=USE_TESTNET, proxy_url=PROXY_URL)
         self.strategy = StrategySignals()
         self.risk     = RiskManager()
         self.db       = TradeDatabase()
         self.mtf      = MultiTimeframeAnalyzer()
         self.ob       = OrderBookAnalyzer(API_KEY, SECRET_KEY)
         self.trailing = TrailingStopManager()
+        self.notifier = TelegramNotifier()
+        self.ml_filter = MLSignalFilter()
 
         # Reglas de precisión dinámicas
         self.trading_rules: Dict[str, Dict] = {}
@@ -94,6 +101,12 @@ class TradingBot:
         logger.info(f"    Timeframe      : {TIMEFRAME}")
         logger.info(f"    Fee rate       : {TRADING_FEE_RATE*100:.2f}%")
         logger.info("=" * 60)
+        self.notifier.send_message(
+            f"🚀 *Bot Iniciado*\n"
+            f"Modo: `{mode}`\n"
+            f"Red: `{net}`\n"
+            f"Capital: `${CAPITAL_TOTAL_USDT}`"
+        )
 
         # Recuperar posiciones abiertas de la base de datos (evita huérfanas en reinicios)
         self._load_open_trades_from_db()
@@ -118,14 +131,16 @@ class TradingBot:
                     pass
 
             self.open_trades[symbol] = {
-                "trade_id":    t["id"],
-                "entry_price": t["entry_price"],
-                "quantity":    t["entry_quantity"],
-                "stop_loss":   t["stop_loss"],
-                "take_profit": t["take_profit"],
-                "max_price":   t.get("max_price", t["entry_price"]),
-                "opened_at":   opened_at,
-                "trailing_sl": t.get("trailing_sl", t["stop_loss"]),
+                "trade_id":        t["id"],
+                "entry_price":     t["entry_price"],
+                "quantity":        t["entry_quantity"],
+                "stop_loss":       t["stop_loss"],
+                "take_profit":     t["take_profit"],
+                "tp_target":       t.get("take_profit", t["stop_loss"]),
+                "risk_per_unit":   abs(t["entry_price"] - t["stop_loss"]),
+                "max_price":       t.get("max_price", t["entry_price"]),
+                "opened_at":       opened_at,
+                "trailing_sl":     t.get("trailing_sl", t["stop_loss"]),
                 "partial_exit_done": t.get("partial_exit_done", False),
             }
             logger.info(
@@ -226,8 +241,13 @@ class TradingBot:
             if iteration % 10 == 0:
                 self._print_stats()
 
-            logger.info(f"⏳  Esperando {POLLING_INTERVAL}s …\n")
-            time.sleep(POLLING_INTERVAL)
+            try:
+                logger.info(f"⏳  Esperando {POLLING_INTERVAL}s …\n")
+                time.sleep(POLLING_INTERVAL)
+            except KeyboardInterrupt:
+                logger.info("\n⚠️  Bot detenido por el usuario.")
+                self._print_stats()
+                sys.exit(0)
 
     def _cycle(self):
         """Un ciclo completo de análisis sobre todos los símbolos."""
@@ -246,23 +266,35 @@ class TradingBot:
                 
         # Aseguramos un mínimo para evitar divisiones por cero si el balance baja mucho
         current_balance = max(current_balance, MIN_ORDER_NOTIONAL * MAX_OPEN_POSITIONS)
-        self.capital_per_trade = current_balance / MAX_OPEN_POSITIONS
+
+        open_pos_count = len(self.open_trades)
+        if open_pos_count < MAX_OPEN_POSITIONS:
+            # Dividimos el balance actual entre el TOTAL de slots (no los disponibles).
+            # Esto evita sobredimensionar posiciones cuando quedan pocos slots libres.
+            # Ej: balance=$500, MAX=3 → capital_per_trade=$167 siempre, no $500 si solo queda 1 slot.
+            self.capital_per_trade = current_balance / MAX_OPEN_POSITIONS
+        else:
+            self.capital_per_trade = 0.0
         # -----------------------------------------
 
-        # 1) Circuit breaker antes de cualquier análisis nuevo
-        if not self._circuit_breaker_ok():
-            return
+        # 1) Verificamos circuit breaker pero NO salimos (debemos monitorear posiciones abiertas)
+        can_open_new = self._circuit_breaker_ok()
+
+        # Health check puede pausar NUEVAS entradas sin desatender salidas/trailing.
+        if Path(PAUSE_SIGNAL_FILE).exists():
+            can_open_new = False
+            logger.warning(f"🛑  Señal de pausa activa ({PAUSE_SIGNAL_FILE}). Solo se gestionan posiciones abiertas.")
 
         for symbol in SYMBOLS:
             try:
-                self._analyze(symbol)
+                self._analyze(symbol, can_open_new=can_open_new)
             except Exception as e:
                 logger.error(f"Error analizando {symbol}: {e}", exc_info=True)
 
     # ─────────────────────────────────────────────────────────────────────────
     # Análisis por símbolo (ahora con MTF)
     # ─────────────────────────────────────────────────────────────────────────
-    def _analyze(self, symbol: str):
+    def _analyze(self, symbol: str, can_open_new: bool = True):
         # ── Obtiene datos de múltiples timeframes ──────────────────────────────
         klines_1h = self.api.get_klines(symbol, "1h", limit=KLINES_LIMIT)
         klines_4h = self.api.get_klines(symbol, "4h", limit=300)  # 300 velas de 4H para asegurar datos suficientes para EMA200 (>210)
@@ -305,14 +337,43 @@ class TradingBot:
             self._check_exit(symbol, last_1h["close"], df_1h)
             return
 
+        # ── Si Circuit Breaker está activo, no evaluar nuevas entradas ───────
+        if not can_open_new:
+            return
+
+        # Gestiona todos los símbolos, pero solo abre nuevas entradas en lista blanca.
+        if symbol not in ENTRY_SYMBOLS:
+            logger.info(f"{symbol} | Nuevas entradas deshabilitadas (ENTRY_SYMBOLS). Solo monitoreo.")
+            return
+
         # ── Sin posición → verificar entrada ────────────────────────────────
         buy_signal_1h, conds_1h = self.strategy.check_buy_signal(df_1h)
 
-        # Agrega precio actual a los detalles
-        conds_1h["close_price"] = last_1h["close"]
+        # ── Análisis de Sentimiento (Funding Rate) ─────────────────────────
+        funding_rate = self.api.get_funding_rate(symbol)
 
+        # Agrega detalles a conds_1h
+        conds_1h["close_price"] = last_1h["close"]
+        if funding_rate is not None:
+            conds_1h["funding_rate"] = funding_rate
+            conds_1h["funding_rate_pct"] = funding_rate * 100
+            
+            # Ajuste de score por Sentimiento / Short Squeeze
+            # Binance devuelve decimales (ej. 0.01% = 0.0001)
+            if funding_rate < -0.00005:  # -0.005% Muy negativo, shorts atrapados
+                conds_1h["score"] += 1
+                conds_1h["min_score"] -= 1 # Facilita la entrada
+                logger.info(f"🔥 SHORT SQUEEZE DETECTADO en {symbol} (Funding: {funding_rate*100:.4f}%). Entradas facilitadas.")
+            elif funding_rate > 0.00015: # +0.015% Muy positivo, longs sobre-apalancados (riesgo de dump)
+                conds_1h["score"] -= 1
+                logger.warning(f"⚠️  Exceso de Longs en {symbol} (Funding: {funding_rate*100:.4f}%). Penalizando score (-1).")
+            
+            # Reevaluar señal 1H tras el ajuste de score
+            buy_signal_1h = conds_1h["score"] >= conds_1h["min_score"]
+
+        funding_str = f"| Funding: {funding_rate*100:.4f}% " if funding_rate is not None else ""
         logger.info(
-            f"{symbol} | precio=${last_1h['close']:.4f} | "
+            f"{symbol} | precio=${last_1h['close']:.4f} {funding_str}| "
             f"RSI={conds_1h.get('rsi', 0):.1f} | "
             f"ADX={conds_1h.get('adx', 0):.1f} | "
             f"score={conds_1h.get('score', 0)}/{conds_1h.get('min_score', 7)} | "
@@ -323,8 +384,10 @@ class TradingBot:
         if buy_signal_1h or conds_1h.get('score', 0) >= 6:
             if "No hay suficientes datos 4H" not in macro_conds.get('reason', ''):
                 # Validación MTF completa con datos de 4H
+                relaxed = symbol in RELAXED_MACRO_SYMBOLS
                 buy_signal_mtf, mtf_details = self.mtf.validate_entry_with_macro(
-                    df_1h, macro_conds, buy_signal_1h, conds_1h
+                    df_1h, macro_conds, buy_signal_1h, conds_1h,
+                    relaxed=relaxed
                 )
             else:
                 # Sin datos 4H suficientes → rechazar entrada por seguridad
@@ -333,7 +396,52 @@ class TradingBot:
                 logger.warning(f"{symbol} | ⚠️  Sin datos 4H suficientes. Entrada rechazada.")
 
             if buy_signal_mtf:
-                self._open_trade(symbol, df_1h, mtf_details)
+                # ML filter: predict probability of winning trade
+                # Prepare features for ML model
+                order_book_dict = None
+                mtf_dict = mtf_details  # reuse what we already have
+                regime_info = self.strategy.detect_market_regime(df_1h)
+                
+                # Get order book data (we'll fetch it fresh for features)
+                try:
+                    ob_data = self.ob.get_order_book(symbol, limit=20)
+                    if ob_data:
+                        liquidity_ok, liquidity_detail = self.ob.validate_order_liquidity(
+                            symbol, 0.001, side="BUY", ob=ob_data  # dummy quantity just for liquidity check
+                        )
+                        wall_detail = self.ob.detect_sell_wall(symbol, last_1h["close"], levels_to_check=10, ob=ob_data)
+                        imbalance = self.ob.calculate_imbalance(symbol, levels=10, ob=ob_data)
+                        order_book_dict = {
+                            "liquidity": liquidity_detail,
+                            "sell_wall": wall_detail,
+                            "imbalance": imbalance
+                        }
+                except Exception as e:
+                    logger.debug(f"Could not get order book for ML features: {e}")
+                    order_book_dict = {}
+                
+                features = self.ml_filter.extract_features(
+                    df=df_1h,
+                    symbol=symbol,
+                    order_book_dict=order_book_dict,
+                    mtf_dict=mtf_dict,
+                    regime_info=regime_info
+                )
+                
+                win_prob = self.ml_filter.predict_proba(features)
+                ml_threshold = 0.6  # Only take trades with >=60% predicted win probability
+                
+                logger.info(
+                    f"{symbol} | ML Signal Filter: "
+                    f"Win Prob={win_prob:.2f} "
+                    f"(Threshold={ml_threshold}) "
+                    f"{'✅ PASS' if win_prob >= ml_threshold else '❌ FAIL'}"
+                )
+                
+                if win_prob >= ml_threshold:
+                    self._open_trade(symbol, df_1h, mtf_details)
+                else:
+                    logger.info(f"{symbol} | Trade rejected by ML filter (low win probability)")
             else:
                 logger.info(f"{symbol} | Señal rechazada: {mtf_details.get('reason', 'N/A')}")
 
@@ -349,24 +457,56 @@ class TradingBot:
             return
 
         # 2. Cooldown por símbolo
-        elapsed = time.time() - self.last_buy_time[symbol]
-        if elapsed < MIN_BUY_COOLDOWN_S:
-            remaining = (MIN_BUY_COOLDOWN_S - elapsed) / 3600
+        from config import SL_COOLDOWN_S, CONSECUTIVE_LOSS_MAX
+        
+        last_exit = self.db.get_last_exit_time(symbol)
+        elapsed_since_exit = time.time() - last_exit
+        
+        # Evaluar pérdidas consecutivas
+        consec_losses = self.db.get_consecutive_losses(symbol)
+        
+        cooldown_needed = MIN_BUY_COOLDOWN_S
+        if consec_losses >= CONSECUTIVE_LOSS_MAX:
+            cooldown_needed = max(cooldown_needed, 12 * 3600)  # 12 horas pausa
+            logger.info(f"⚠️ {symbol} tiene {consec_losses} pérdidas seguidas. Cooldown extendido (12h).")
+        elif consec_losses > 0:
+            cooldown_needed = max(cooldown_needed, SL_COOLDOWN_S)  # 8 horas pausa
+            
+        elapsed_since_buy = time.time() - self.last_buy_time[symbol]
+        
+        if elapsed_since_buy < cooldown_needed or elapsed_since_exit < cooldown_needed:
+            remaining = max(cooldown_needed - elapsed_since_buy, cooldown_needed - elapsed_since_exit) / 3600
             logger.info(f"Cooldown activo para {symbol}: {remaining:.1f}h restantes.")
             return
 
         entry_price = df.iloc[-1]["close"]
         sl, tp, atr = self.strategy.calculate_sl_tp(entry_price, df)
 
-        # Criterio de Kelly Dinámico basado en estadísticas históricas
+        # ── Objetivo de Take Profit estático ──────────────────────────────────
+        # TP objetivo = entry + (TP_ATR_MULT × ATR). Sirve como objetivo de
+        # venta parcial: al alcanzarlo se vende el 50% y el SL se sube a breakeven.
+        # El resto de la posición continúa con trailing SL.
+        risk_per_unit = abs(entry_price - sl)  # riesgo $ por unidad
+
+        # 1. Cálculo de tamaño (Sizing) basado en riesgo (Kelly)
         stats = self.db.get_symbol_trades_stats(symbol)
         risk_pct = self.risk.calculate_kelly_risk(stats, RIESGO_POR_TRADE)
 
-        # Sizing con CAP de presupuesto asignado por posición (capital_per_trade)
-        qty = self.risk.position_size(
+        # Calcular cantidad ideal basado en el riesgo por unidad y el capital asignado
+        qty_risk_based = self.risk.position_size(
             self.capital_per_trade, entry_price, sl, risk_pct
         )
-        qty = min(qty, self.capital_per_trade / entry_price)
+        
+        # 2. Aplicación de multiplicador de régimen (Ajuste estratégico)
+        regime = conds.get('regime', 'NORMAL')
+        size_multiplier = self.strategy.get_position_size_multiplier(regime)
+        qty_adjusted = qty_risk_based * size_multiplier
+        
+        # 3. Limitar por capital total disponible (Safety Cap)
+        max_qty_by_cap = self.capital_per_trade / entry_price
+        qty = min(qty_adjusted, max_qty_by_cap)
+        
+        # 4. Redondeo y redondeo final de la cantidad
         qty_rounded = self.round_qty(symbol, qty)
 
         # Ajuste automático: si el notional es menor al mínimo, subir qty
@@ -462,18 +602,26 @@ class TradingBot:
         )
 
         self.open_trades[symbol] = {
-            "trade_id":    trade_id,
-            "entry_price": entry_price,
-            "quantity":    qty_rounded,
-            "stop_loss":   sl,
-            "take_profit": tp,
-            "max_price":   entry_price,
-            "opened_at":   datetime.now(),
-            "trailing_sl": sl,
+            "trade_id":        trade_id,
+            "entry_price":     entry_price,
+            "quantity":        qty_rounded,
+            "stop_loss":       sl,
+            "take_profit":     tp,
+            "tp_target":       tp,
+            "risk_per_unit":   risk_per_unit,
+            "max_price":       entry_price,
+            "opened_at":       datetime.now(),
+            "trailing_sl":     sl,
             "partial_exit_done": False,
         }
         self.last_buy_time[symbol] = time.time()
         logger.info(f"✅  {mode_tag}Compra ejecutada: {symbol} #{trade_id} a ${entry_price:.4f}")
+        self.notifier.send_message(
+            f"🟢 *COMPRA: {symbol}*\n"
+            f"Precio: `${entry_price:.4f}`\n"
+            f"Score: `{conds.get('score', 0)}`\n"
+            f"Modo: {mode_tag.strip() or 'REAL'}"
+        )
 
     # ─────────────────────────────────────────────────────────────────────────
     # Verificar salida (ahora con Trailing Stop dinámico)
@@ -491,14 +639,31 @@ class TradingBot:
             trade["max_price"] = price
             max_updated = True
 
-        # ── NUEVO: Trailing Stop dinámico ──────────────────────────────────────
+        # ── NUEVO: Trailing Stop dinámico 
+        # Inteligencia Dinámica: El trailing stop se ajusta al régimen ACTUAL del mercado
+        regime_info = self.strategy.detect_market_regime(df)
+        regime = regime_info["regime"]
+        adx_val = regime_info.get("adx", 0.0)
+        
+        if regime in ["TREND_STRONG_BULL", "TREND_BULL"]:
+            trailing_mult = 2.0  # Da más respiro en tendencias fuertes
+            breakeven_pct = 2.0  # Espera más para activar breakeven
+        elif regime in ["RANGE_VOLATILE", "CHOPPY"]:
+            trailing_mult = 1.0  # Stop súper ajustado en ruido
+            breakeven_pct = 1.0  # Protege capital rápidamente
+        else:
+            trailing_mult = 1.5
+            breakeven_pct = 1.5
+
+        # --- Actualizar Trailing Stop ---
         trailing_result = self.trailing.update_trailing_stop(
-            entry_price=entry,
+            entry_price=trade["entry_price"],
             current_price=price,
             current_atr=last["atr"],
             max_price=trade["max_price"],
-            initial_sl=initial_sl,
-            trailing_atr_mult=3.0,  # Aumentado de 2.5 para máximo respaldo
+            initial_sl=trade["stop_loss"],
+            trailing_atr_mult=trailing_mult,
+            breakeven_pct=breakeven_pct
         )
 
         current_sl = trailing_result["new_sl"]
@@ -519,6 +684,29 @@ class TradingBot:
         exit_price  = None
         exit_reason = None
 
+        # ── TP Objetivo alcanzado → Venta Parcial + SL a breakeven ──────────────
+        # Si el precio llega al objetivo de TP se vende el 50% de la posición
+        # y el SL se mueve al precio de entrada (sin pérdidas).
+        # El resto de la posición continúa con trailing SL.
+        tp_target = trade.get("tp_target", 0.0)
+        if (
+            tp_target > 0
+            and not trade.get("partial_exit_done", False)
+            and price >= tp_target
+            and (datetime.now() - trade["opened_at"]).total_seconds() >= MIN_HOLD_HOURS * 3600
+        ):
+            self._close_partial_trade(
+                symbol, price, trade_id,
+                reason=f"TP Objetivo alcanzado (${tp_target:.4f})",
+                exit_quantity=trade["quantity"] * 0.5,
+            )
+            trade["partial_exit_done"] = True
+            self.open_trades[symbol]["partial_exit_done"] = True
+            # Mover SL a breakeven sobre el resto de la posición
+            trade["trailing_sl"] = trade["entry_price"]
+            self.db.update_trailing_sl(trade_id, trade["entry_price"], trade["max_price"])
+            logger.info(f"{symbol} | 🛡️  SL movido a Break-Even (${trade['entry_price']:.4f}) después de venta parcial en TP")
+
         # 1. Trailing Stop Hit
         if price <= current_sl:
             exit_price, exit_reason = price, f"Trailing Stop (SL ${current_sl:.4f})"
@@ -529,9 +717,13 @@ class TradingBot:
             if s_score >= self.strategy.MIN_SELL_SCORE:
                 exit_price, exit_reason = price, s_reason
 
-        # 3. RSI extremadamente bajo (crash en curso) — siempre activo
+        # 3. RSI extremadamente bajo (crash en curso)
+        # Ajuste: No requiere ADX alto, pero sí confirmación de caída severa de precio y RSI
         if exit_price is None and last["rsi"] < 25:
-            exit_price, exit_reason = price, "RSI Crash (<25)"
+            # Solo salir si el precio cayó significativamente desde la entrada (ej. > 3%)
+            # para evitar cerrar en un pullback normal
+            if price < entry * 0.97:
+                exit_price, exit_reason = price, "RSI Crash (<25) + Drop >3%"
 
         # 4. Cierre parcial opcional de ganancias
         if exit_price is None and not trade.get("partial_exit_done"):
@@ -539,7 +731,7 @@ class TradingBot:
                 entry_price=entry,
                 current_price=price,
                 total_quantity=trade["quantity"],
-                profit_target_pct=3.0,
+                profit_target_pct=PARTIAL_TP_PCT,
             )
             if partial.get("should_exit_partial"):
                 logger.info(f"{symbol} | 💰 Cierre parcial activado: {partial['reason']}")
@@ -604,6 +796,11 @@ class TradingBot:
         logger.info(f"✨  {mode_tag}VENTA PARCIAL (50%): {symbol} — {reason}")
         logger.info(f"    Entrada: ${entry:.4f} → Salida: ${exit_price:.4f}")
         logger.info(f"    P&L Asegurado: ${pnl:.2f}")
+        self.notifier.send_message(
+            f"💰 *PARCIAL (50%): {symbol}*\n"
+            f"P&L Asegurado: `${pnl:.2f}`\n"
+            f"Modo: {mode_tag.strip() or 'REAL'}"
+        )
         logger.info(f"{'=' * 60}\n")
 
     def _close_trade(self, symbol: str, exit_price: float,
@@ -652,6 +849,12 @@ class TradingBot:
         logger.info(f"{emoji}  {mode_tag}VENTA: {symbol} — {reason}")
         logger.info(f"    Entrada: ${entry:.4f} → Salida: ${exit_price:.4f}")
         logger.info(f"    P&L    : ${pnl:.2f}  ({(exit_price/entry - 1)*100:.2f}%)")
+        self.notifier.send_message(
+            f"{emoji} *VENTA: {symbol}*\n"
+            f"P&L: `${pnl:.2f}` ({(exit_price/entry - 1)*100:.2f}%)\n"
+            f"Razón: {reason}\n"
+            f"Modo: {mode_tag.strip() or 'REAL'}"
+        )
         if self.paper_trading:
             logger.info(f"    P&L acumulado (paper): ${self.paper_pnl:.2f} | Fees: ${self.paper_fees:.2f}")
         logger.info(f"{'=' * 60}\n")
@@ -699,6 +902,12 @@ class TradingBot:
             logger.info(f"  Avg/trade     : {stats['avg_percent_per_trade']:+.2f}%")
         
         logger.info(f"{'=' * 60}\n")
+        if stats and stats.get("total_trades", 0) > 0:
+            self.notifier.send_message(
+                f"📊 *Resumen Diario*\n"
+                f"P&L Hoy: `${daily_pnl:+.2f}`\n"
+                f"Win Rate: `{stats['win_rate']:.2f}%`"
+            )
 
 
 def main():

@@ -181,7 +181,8 @@ class OrderBookAnalyzer:
         if not ob:
             return False, {"reason": "No order book data"}
 
-        side_book = ob.get("bids" if side == "BUY" else "asks", [])
+        # BUY orders consume liquidity from ASKS (sellers), SELL orders from BIDS (buyers)
+        side_book = ob.get("asks" if side == "BUY" else "bids", [])
         cumulative = 0.0
 
         for price_str, qty_str in side_book:

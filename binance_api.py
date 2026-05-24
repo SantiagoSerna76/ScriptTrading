@@ -18,12 +18,19 @@ REQUEST_TIMEOUT = 12
 class BinanceAPI:
     """Wrapper para la API de Binance con reintentos y manejo robusto de errores."""
 
-    def __init__(self, api_key: str, secret_key: str, use_testnet: bool = True):
+    def __init__(self, api_key: str, secret_key: str, use_testnet: bool = True, proxy_url: str = None):
         self.api_key    = api_key
         self.secret_key = secret_key
         self.use_testnet = use_testnet
         self.BASE_URL   = "https://testnet.binance.vision" if use_testnet else "https://api.binance.com"
         self.session    = requests.Session()
+
+        # Configurar Proxy si existe (para evitar bloqueos IP en Render/nube)
+        if proxy_url:
+            proxies = {"http": proxy_url, "https": proxy_url}
+            self.session.proxies.update(proxies)
+            logger.info(f"🌐 Proxy configurado exitosamente.")
+
         if api_key:
             self.session.headers.update({"X-MBX-APIKEY": api_key})
 
@@ -140,6 +147,20 @@ class BinanceAPI:
         if data:
             return data["symbols"][0] if data.get("symbols") else None
         return None
+
+    def get_funding_rate(self, symbol: str) -> Optional[float]:
+        """Obtiene el Funding Rate actual desde Binance Futures USD-M para medir el sentimiento."""
+        try:
+            # Endpoint público de futuros
+            url = "https://fapi.binance.com/fapi/v1/premiumIndex"
+            resp = requests.get(url, params={"symbol": symbol}, timeout=5)
+            if resp.status_code == 200:
+                data = resp.json()
+                return float(data.get("lastFundingRate", 0.0))
+            return None
+        except Exception as e:
+            logger.debug(f"No se pudo obtener Funding Rate para {symbol}: {e}")
+            return None
 
     # ── Endpoints privados ────────────────────────────────────────────────────
     def place_order(

@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Antigravity Dashboard 🚀</title>
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css">
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <div class="background-glow"></div>
+    <div class="container">
+        <header>
+            <h1>Antigravity <span>Dashboard</span></h1>
+            <div class="status-badge"><span class="dot pulse"></span> Bot Online</div>
+        </header>
+
+        <section class="kpi-grid">
+            <div class="kpi-card glass">
+                <h3>P&L Total</h3>
+                <p id="total-pnl" class="value loading">$0.00</p>
+            </div>
+            <div class="kpi-card glass">
+                <h3>P&L de Hoy</h3>
+                <p id="daily-pnl" class="value loading">$0.00</p>
+            </div>
+            <div class="kpi-card glass">
+                <h3>Win Rate</h3>
+                <p id="win-rate" class="value loading">0%</p>
+            </div>
+            <div class="kpi-card glass">
+                <h3>Trades Totales</h3>
+                <p id="total-trades" class="value loading">0</p>
+            </div>
+        </section>
+
+        <div class="main-content">
+            <section class="chart-section glass">
+                <h2>Crecimiento de Capital</h2>
+                <div class="chart-container">
+                    <canvas id="pnlChart"></canvas>
+                </div>
+            </section>
+
+            <section class="tables-section">
+                <div class="table-card glass">
+                    <h2>Posiciones Abiertas <span class="badge" id="open-count">0</span></h2>
+                    <div class="table-wrapper">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Símbolo</th>
+                                    <th>Entrada</th>
+                                    <th>Riesgo (SL)</th>
+                                    <th>Asegurado (SL)</th>
+                                    <th>Ganancias</th>
+                                </tr>
+                            </thead>
+                            <tbody id="open-trades-body">
+                                <tr><td colspan="5" class="empty-state">No hay operaciones abiertas</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="table-card glass mt-2">
+                    <h2>Historial Reciente (Últimos 20)</h2>
+                    <div class="table-wrapper">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Símbolo</th>
+                                    <th>Salida</th>
+                                    <th>Motivo</th>
+                                    <th>P&L</th>
+                                </tr>
+                            </thead>
+                            <tbody id="history-body">
+                                <tr><td colspan="4" class="empty-state">No hay historial</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+        </div>
+    </div>
+    <script src="/static/dashboard.js"></script>
+</body>
+</html>

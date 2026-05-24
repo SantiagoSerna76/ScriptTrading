@@ -7,26 +7,54 @@ load_dotenv()
 API_KEY    = os.getenv("BINANCE_API_KEY")
 SECRET_KEY = os.getenv("BINANCE_SECRET_KEY")
 
+# ─── Telegram Notifier ───────────────────────────────────────────────────────
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID   = os.getenv("TELEGRAM_CHAT_ID")
+
 # ─── Modo de Operación ───────────────────────────────────────────────────────
 PAPER_TRADING = True    # True = simula trades sin ejecutar órdenes reales (RECOMENDADO para pruebas)
 USE_TESTNET   = False   # False = usa Mainnet para datos reales de mercado
 
 # ─── Universo de Trading ─────────────────────────────────────────────────────
-# Seleccionados por scanner.py: PF ≥ 1.3 y P&L positivo tras comisiones (60 días)
-SYMBOLS = ["INJUSDT", "ICPUSDT", "MATICUSDT", "TRXUSDT", "SOLUSDT", "ATOMUSDT", "RENDERUSDT"]
+# Seleccionados por scanner (30 pares, 60 días): solo símbolos con PF > 1.0 y P&L positivo
+# Universo monitoreado. NEAR se conserva para gestionar una posición abierta existente.
+SYMBOLS = ['INJUSDT', 'ICPUSDT', 'UNIUSDT', 'APTUSDT', 'FILUSDT', 'NEARUSDT']
+
+# Monitorear todos los SYMBOLS, pero abrir nuevas entradas solo en los aprobados.
+# Nuevas entradas: seleccionados por scanner MTF real (PF >= 1.5, WR >= 55%, trades >= 8).
+ENTRY_SYMBOLS = ['INJUSDT', 'ICPUSDT', 'UNIUSDT', 'APTUSDT', 'FILUSDT']
+
+# Reset estadístico tras auditoría cuantitativa. No borra la DB; solo evita mezclar
+# resultados de configuraciones antiguas con la estrategia activa.
+STRATEGY_START_TIME = "2026-05-24T00:58:00"
 
 # ─── Capital y Riesgo ────────────────────────────────────────────────────────
-CAPITAL_TOTAL_USDT   = 100.0   # Capital total que el bot puede usar
-RIESGO_POR_TRADE     = 0.02    # 2% del capital por trade (ajustado para $100 de capital)
-MAX_OPEN_POSITIONS   = 5     # Máximo de posiciones simultáneas (más rotación)
+CAPITAL_TOTAL_USDT   = 500.0   # Capital total que el bot puede usar
+RIESGO_POR_TRADE     = 0.02    # 2% del capital por trade (base — Kelly lo ajusta dinámicamente)
+MAX_OPEN_POSITIONS   = 3      # Máximo de posiciones simultáneas ($167 por posición con 5 símbolos)
 MIN_ORDER_NOTIONAL   = 5.0     # Mínimo real de Binance para estos altcoins (verificado por get_symbol_rules)
 
-# ─── Protección diaria ───────────────────────────────────────────────────────
-MAX_DAILY_LOSS_USDT  = 5.0     # Si perdemos $5 en el día → circuit breaker
-MAX_DAILY_TRADES     = 10      # No más de 10 trades por día
+# ─── Ajuste por Régimen de Mercado ───────────────────────────────────────────
+POSITION_SIZE_TRENDING  = 1.0    # 100% en tendencia
+POSITION_SIZE_RANGING = 0.5    # 50% en rango
+POSITION_SIZE_VOLATILE = 0.7    # 70% en volatilidad
+POSITION_SIZE_UNCERTAIN = 0.3    # 30% en pánico/incertidumbre
 
-# ─── Cooldown entre entradas ─────────────────────────────────────────────────
-MIN_BUY_COOLDOWN_S   = 1.5 * 3600   # 1.5h mínimo entre entradas del mismo par (aumenta rotación)
+
+# ─── Relajación de filtros para acelerar acumulación de datos ─────────────────
+# Símbolos donde se permite entrada aunque macro 4H sea neutral (no bajista).
+# Útil en paper trading para generar más trades de entrenamiento ML.
+RELAXED_MACRO_SYMBOLS = []
+
+# ─── Protección diaria ───────────────────────────────────────────────────────
+MAX_DAILY_LOSS_USDT  = 8.0     # Si perdemos $8 en el día → circuit breaker (ajustado a 3 posiciones × $167)
+MAX_DAILY_TRADES     = 6       # No más de 6 trades por día (5 símbolos = menor frecuencia)
+
+# ─── Cooldown entre entradas ─────────────────────────────────────────
+MIN_BUY_COOLDOWN_H   = 4      # 4h mínimo entre entradas del mismo par (evita señales falsas consecutivas)
+MIN_BUY_COOLDOWN_S = MIN_BUY_COOLDOWN_H * 3600   # 4h de cooldown en segundos
+SL_COOLDOWN_S        = 4 * 3600     # 4h de cooldown extra después de un Stop Loss (mercado en contra)
+CONSECUTIVE_LOSS_MAX = 2            # Tras 2 pérdidas consecutivas en un símbolo → pausa de 12h
 
 # ─── Indicadores técnicos ────────────────────────────────────────────────────
 TIMEFRAME       = "1h"
@@ -34,22 +62,33 @@ KLINES_LIMIT    = 500   # Datos suficientes para EMA200 + margen (estabilizació
 EMA_CORTO       = 20
 EMA_LARGO       = 50
 RSI_PERIOD      = 14
-RSI_MIN         = 55    # Relajado de 58: permite momentum moderado sin exclusiones excesivas
+RSI_MIN         = 53    # Optimizado cuantitativamente (53): capta momentum temprano con alta precision
 RSI_MAX         = 72
 ATR_PERIOD      = 14
 ATR_MULTIPLIER  = 2.0
 ADX_PERIOD      = 14
 ADX_MIN         = 25    # Relajado de 27: tendencia clara sin exigir extremos
 
+# ─── Fibonacci ──────────────────────────────────────────────────────────────────
+FIBONACCI_PERIOD = 50   # Velas para encontrar swing high/low y calcular retrazos
+FIBONACCI_BOUNCE_PCT = 0.8  # % de tolerancia para considerar un "bounce" en soporte Fibonacci (bajado de 1.0→0.8: más preciso)
+FIBONACCI_EXT_TP = 1.272    # Extensión Fibonacci para take profit parcial (127.2%)
+FIBONACCI_REQUIRE_IN_WEAK = True  # True = exige soporte Fibonacci para entrar en regímenes CHOPPY/RANGE
+
 # ─── Stop Loss / Take Profit ─────────────────────────────────────────────────
-SL_ATR_MULT = 3.0   # Stop Loss = entry - (SL_ATR_MULT * ATR) — Aumentado para máximo respaldo
-TP_ATR_MULT = 3.0   # Take Profit = entry + (TP_ATR_MULT * ATR)  ← ratio 1:1
+SL_ATR_MULT = 1.8   # Stop Loss = entry - (SL_ATR_MULT * ATR) [Optimizado de 2.0 a 1.8]
+TP_ATR_MULT = 2.3   # Take Profit = entry + (TP_ATR_MULT * ATR) [Optimizado de 2.5 a 2.3]
+PARTIAL_TP_PCT = 2.5  # % de ganancia para activar Venta Parcial [Optimizado de 2.0% a 2.5% para dejar correr ganadores]
 
 # ─── Comisiones y Retención ──────────────────────────────────────────────────
 TRADING_FEE_RATE = 0.001   # 0.1% por operación (Binance Spot estándar)
-MIN_HOLD_HOURS   = 0.5    # Mínimo 30 min antes de permitir salida por señal
+MIN_HOLD_HOURS   = 1.0    # Mínimo 1h antes de permitir salida por señal (evita ruido intra-vela)
 
 # ─── Sistema ─────────────────────────────────────────────────────────────────
 LOG_FILE         = "trading_bot.log"
 DB_FILE          = "trades.db"
-POLLING_INTERVAL = 60   # segundos entre ciclos
+POLLING_INTERVAL = 60   # 1 min entre ciclos
+
+# ─── Proxy (para evitar bloqueos IP en Render/nube) ──────────────────────────
+PROXY_URL = os.getenv("PROXY_URL")  # Formato: http://user:pass@ip:port
+
