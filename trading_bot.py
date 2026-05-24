@@ -66,7 +66,7 @@ class TradingBot:
         self.risk     = RiskManager()
         self.db       = TradeDatabase()
         self.mtf      = MultiTimeframeAnalyzer()
-        self.ob       = OrderBookAnalyzer(API_KEY, SECRET_KEY)
+        self.ob       = OrderBookAnalyzer(API_KEY, SECRET_KEY, proxy_url=PROXY_URL)
         self.trailing = TrailingStopManager()
         self.notifier = TelegramNotifier()
         self.ml_filter = MLSignalFilter()

@@ -26,10 +26,15 @@ class OrderBookAnalyzer:
 
     BASE_URL = "https://api.binance.com/api/v3"
 
-    def __init__(self, api_key: str = "", secret_key: str = ""):
+    def __init__(self, api_key: str = "", secret_key: str = "", proxy_url: str = None):
         """Order Book es público, pero pasamos credenciales por si acaso."""
         self.api_key = api_key
         self.secret_key = secret_key
+        self.session = requests.Session()
+        if proxy_url:
+            proxies = {"http": proxy_url, "https": proxy_url}
+            self.session.proxies.update(proxies)
+            logger.info(f"🌐 OrderBookAnalyzer usando proxy configurado")
 
     def get_order_book(
         self, symbol: str, limit: int = 20
@@ -41,7 +46,7 @@ class OrderBookAnalyzer:
         try:
             url = f"{self.BASE_URL}/depth"
             params = {"symbol": symbol, "limit": limit}
-            resp = requests.get(url, params=params, timeout=5)
+            resp = self.session.get(url, params=params, timeout=5)
             resp.raise_for_status()
             return resp.json()
         except Exception as e:
