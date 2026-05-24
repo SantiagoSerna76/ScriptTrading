@@ -22,7 +22,7 @@ SYMBOLS = ['INJUSDT', 'ICPUSDT', 'UNIUSDT', 'APTUSDT', 'FILUSDT', 'NEARUSDT']
 
 # Monitorear todos los SYMBOLS, pero abrir nuevas entradas solo en los aprobados.
 # Nuevas entradas: seleccionados por scanner MTF real (PF >= 1.5, WR >= 55%, trades >= 8).
-ENTRY_SYMBOLS = ['INJUSDT', 'ICPUSDT', 'UNIUSDT', 'APTUSDT', 'FILUSDT']
+ENTRY_SYMBOLS = ['INJUSDT', 'ICPUSDT', 'UNIUSDT', 'APTUSDT', 'FILUSDT', 'NEARUSDT']
 
 # Reset estadístico tras auditoría cuantitativa. No borra la DB; solo evita mezclar
 # resultados de configuraciones antiguas con la estrategia activa.
