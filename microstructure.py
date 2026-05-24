@@ -179,7 +179,8 @@ class OrderBookAnalyzer:
         if ob is None:
             ob = self.get_order_book(symbol, limit=50)
         if not ob:
-            return False, {"reason": "No order book data"}
+            logger.warning(f"⚠️  Order Book no disponible para {symbol} — permitiendo trade sin validación de liquidez")
+            return True, {"reason": "No order book data — proceeding anyway", "bypassed": True}
 
         # BUY orders consume liquidity from ASKS (sellers), SELL orders from BIDS (buyers)
         side_book = ob.get("asks" if side == "BUY" else "bids", [])
@@ -221,7 +222,8 @@ class OrderBookAnalyzer:
         # 1. Descargamos el Order Book una sola vez
         ob = self.get_order_book(symbol, limit=50)
         if not ob:
-            return False, {"reason": "No order book data"}
+            logger.warning(f"⚠️  Order Book no disponible para {symbol} — permitiendo trade sin validación de microestructura")
+            return True, {"reason": "No order book data — proceeding anyway", "bypassed": True}
 
         # 2. Liquidity check
         liquidity_ok, liquidity_detail = self.validate_order_liquidity(
