@@ -5,6 +5,9 @@ from typing import Dict, Tuple
 from config import (
     EMA_CORTO, EMA_LARGO, RSI_PERIOD, RSI_MIN, RSI_MAX,
     ATR_PERIOD, ADX_PERIOD, ADX_MIN, SL_ATR_MULT, TP_ATR_MULT,
+    FIBONACCI_PERIOD, FIBONACCI_BOUNCE_PCT, FIBONACCI_EXT_TP, FIBONACCI_REQUIRE_IN_WEAK,
+    POSITION_SIZE_TRENDING, POSITION_SIZE_RANGING,
+    POSITION_SIZE_VOLATILE, POSITION_SIZE_UNCERTAIN,
 )
 
 logger = logging.getLogger(__name__)
@@ -78,7 +81,7 @@ class StrategySignals:
     Señales basadas en puntuación + filtro macro EMA200.
     """
 
-    MIN_BUY_SCORE  = 8  # Ajustado de 9→8 para permitir más trades sin sacrificar calidad
+    MIN_BUY_SCORE  = 8  # Subido de 7→8: menos entradas pero todas de alta calidad (PF > 2.0)
     MIN_SELL_SCORE = 4  # Subido de 3→4: exige señales más fuertes para cerrar
 
     def __init__(self):
@@ -97,7 +100,105 @@ class StrategySignals:
         df["stoch_k"], df["stoch_d"] = ti.stochastic(df)
         df["volume_sma"] = ti.sma(df["volume"], 20)
         df["bb_upper"], df["bb_mid"], df["bb_lower"] = ti.bollinger(df["close"])
+        df["atr_sma_20"] = df["atr"].rolling(20).mean()      # Precalculado para optimizar rendimiento
         return df
+
+    def detect_market_regime(self, df: pd.DataFrame) -> Dict:
+        """
+        Detecta el régimen del mercado (1H) analizando ADX, ATR y Volumen.
+        Devuelve un diccionario con el tipo de régimen y sugerencia de score mínimo.
+        """
+        if df is None or len(df) < 30:
+            return {
+                "regime": "UNKNOWN",
+                "min_score": self.MIN_BUY_SCORE,
+                "adx": 0.0,
+                "reason": "Insuficientes datos"
+            }
+            
+        last = df.iloc[-1]
+        adx_val = last.get("adx", 0.0)
+        close = last["close"]
+        ema200 = last.get("ema200", close)
+        ema20 = last.get("ema_short", close)
+        ema50 = last.get("ema_long", close)
+        volume = last.get("volume", 0.0)
+        volume_sma = last.get("volume_sma", volume)
+        atr = last.get("atr", 0.0)
+        
+        # Calcular ATR promedio reciente (usar precalculado si existe)
+        atr_sma = last.get("atr_sma_20", atr)
+        if pd.isna(atr_sma):
+            atr_sma = atr
+        
+        # Clasificación de régimen
+        if adx_val >= 25 and close > ema200 and ema20 > ema50:
+            regime = "TREND_STRONG_BULL"
+            min_score = 7  # Excelente tendencia, permitimos entradas más fluidas
+            reason = f"Tendencia alcista fuerte (ADX={adx_val:.1f})"
+        elif adx_val >= 20 and (close > ema200 or ema20 > ema50):
+            regime = "TREND_WEAK"
+            min_score = 8  # Tendencia en desarrollo o débil, exigir más confirmación
+            reason = f"Tendencia alcista moderada/débil (ADX={adx_val:.1f})"
+        elif adx_val < 20:
+            if volume > volume_sma and atr > atr_sma:
+                regime = "RANGE_VOLATILE"
+                min_score = 8  # Rango volátil, exige buena puntuación
+                reason = "Mercado en rango con volatilidad alta"
+            else:
+                regime = "CHOPPY"
+                min_score = 9  # Lateral picado y aburrido, solo entrar con señales perfectas (9/10)
+                reason = "Mercado lateral / consolidación de bajo volumen (Chop)"
+        else:
+            regime = "NORMAL"
+            min_score = 8
+            reason = "Condiciones normales de mercado"
+            
+        return {
+            "regime": regime,
+            "min_score": min_score,
+            "adx": adx_val,
+            "reason": reason
+        }
+
+    @staticmethod
+    def get_position_size_multiplier(regime: str) -> float:
+        mapping = {
+            "TREND_STRONG_BULL": POSITION_SIZE_TRENDING,
+            "TREND_BULL":        POSITION_SIZE_TRENDING,
+            "TREND_WEAK":        POSITION_SIZE_TRENDING * 0.8,
+            "RANGE_VOLATILE":    POSITION_SIZE_VOLATILE,
+            "CHOPPY":            POSITION_SIZE_RANGING,
+            "NORMAL":            POSITION_SIZE_UNCERTAIN,
+            "UNKNOWN":           POSITION_SIZE_UNCERTAIN,
+        }
+        return mapping.get(regime, POSITION_SIZE_UNCERTAIN)
+
+    @staticmethod
+    def calcular_niveles_fibonacci(df: pd.DataFrame, period: int = FIBONACCI_PERIOD) -> dict:
+        if df is None or df.empty or len(df) < period:
+            logger.warning("DataFrame vacío o insuficiente para calcular Fibonacci.")
+            return {}
+        if not all(col in df.columns for col in ["high", "low"]):
+            logger.warning("Faltan las columnas 'high' o 'low' en el DataFrame.")
+            return {}
+        bloque_reciente = df.tail(period)
+        maximo = bloque_reciente["high"].max()
+        minimo = bloque_reciente["low"].min()
+        distancia = maximo - minimo
+        if distancia == 0:
+            return {}
+        return {
+            "swing_high": maximo,
+            "swing_low": minimo,
+            "fib_236": maximo - (distancia * 0.236),
+            "fib_382": maximo - (distancia * 0.382),
+            "fib_500": maximo - (distancia * 0.500),
+            "fib_618": maximo - (distancia * 0.618),
+            "fib_786": maximo - (distancia * 0.786),
+            "fib_ext_1272": maximo + (distancia * 0.272),
+            "fib_ext_1618": maximo + (distancia * 0.618),
+        }
 
     def check_buy_signal(self, df: pd.DataFrame) -> Tuple[bool, Dict]:
         if df is None or len(df) < 60:
@@ -117,7 +218,7 @@ class StrategySignals:
         # Margen significativo sobre EMA200 (evita entradas marginales)
         ema200_margin_pct = (last["close"] / last["ema200"] - 1) * 100 if last["ema200"] > 0 else 0
         details["ema200_margin_pct"] = round(ema200_margin_pct, 2)
-        macro_margin_ok = ema200_margin_pct >= 1.0  # Al menos 1% arriba de EMA200
+        macro_margin_ok = ema200_margin_pct >= 0.5  # Al menos 0.5% arriba de EMA200 (relajado de 1%)
 
         # ── Puntuación ────────────────────────────────────────────────────
         # 1. EMA20 > EMA50 (+2 pts)
@@ -185,8 +286,47 @@ class StrategySignals:
         if atr_expanding:
             score += 1
 
+        # 11. Fibonacci — soporte en retroceso 0.5 o 0.618 (+2 pts)
+        fib_levels = self.calcular_niveles_fibonacci(df, FIBONACCI_PERIOD)
+        fib_bounce = False
+        fib_near_618 = False
+        if fib_levels:
+            close = last["close"]
+            fib_618 = fib_levels["fib_618"]
+            fib_500 = fib_levels["fib_500"]
+            swing_low = fib_levels["swing_low"]
+            swing_high = fib_levels["swing_high"]
+            details["fib_618"] = round(fib_618, 4)
+            details["fib_500"] = round(fib_500, 4)
+            details["fib_swing_high"] = round(swing_high, 4)
+            details["fib_swing_low"] = round(swing_low, 4)
+            bounce_pct = FIBONACCI_BOUNCE_PCT / 100
+            fib_near_618 = abs(close - fib_618) / fib_618 < bounce_pct
+            fib_near_500 = abs(close - fib_500) / fib_500 < bounce_pct
+            fib_bounce = fib_near_618 or fib_near_500
+            details["fib_bounce"] = fib_bounce
+            if fib_bounce:
+                score += 2
+                logger.debug(f"Fibonacci support bounce detectado (cerca de {'0.618' if fib_near_618 else '0.5'})")
+
+        # 12. Fibonacci — precio entre 0.382 y 0.5 (zona neutral-bullish, +1 pt)
+        fib_mid_zone = False
+        if fib_levels and not fib_bounce:
+            close = last["close"]
+            fib_382 = fib_levels["fib_382"]
+            fib_500 = fib_levels["fib_500"]
+            fib_mid_zone = fib_382 <= close <= fib_500
+            details["fib_mid_zone"] = fib_mid_zone
+            if fib_mid_zone:
+                score += 1
+
+        regime_info = self.detect_market_regime(df)
+        min_score = regime_info["min_score"]
+
         details["score"]     = score
-        details["min_score"] = self.MIN_BUY_SCORE
+        details["min_score"] = min_score
+        details["regime"]    = regime_info["regime"]
+        details["regime_desc"] = regime_info["reason"]
 
         # Hard blocks: cualquiera cancela la señal aunque el score sea suficiente
         hard_block = (
@@ -195,11 +335,23 @@ class StrategySignals:
             or not macro_margin_ok  # precio apenas por encima de EMA200 (margen <1%)
         )
 
-        return (score >= self.MIN_BUY_SCORE and not hard_block), details
+        # Hard block adicional: en CHOPPY o RANGE_VOLATILE, exigir soporte Fibonacci
+        if not hard_block and FIBONACCI_REQUIRE_IN_WEAK:
+            regime = regime_info.get("regime", "NORMAL")
+            if regime in ("CHOPPY", "RANGE_VOLATILE") and fib_levels and not fib_bounce:
+                hard_block = True
+                details["fib_block"] = True
+
+        return (score >= min_score and not hard_block), details
 
     def calculate_sl_tp(self, entry: float, df: pd.DataFrame):
         atr = df.iloc[-1]["atr"]
-        return entry - SL_ATR_MULT * atr, entry + TP_ATR_MULT * atr, atr
+        sl = entry - SL_ATR_MULT * atr
+        tp_atr = entry + TP_ATR_MULT * atr
+        fib_levels = self.calcular_niveles_fibonacci(df, FIBONACCI_PERIOD)
+        tp_fib = fib_levels.get("fib_ext_1272", tp_atr) if fib_levels else tp_atr
+        tp = max(tp_atr, tp_fib)
+        return sl, tp, atr
 
     # alias back-compat para backtest.py
     def calculate_stop_loss_and_tp(self, entry, df, side="BUY"):
@@ -223,6 +375,18 @@ class StrategySignals:
             score += 1; reason.append("Trend Collapse")
         if last["close"] >= last["bb_upper"]:
             score += 1; reason.append("BB Upper")
+
+        # ── Fibonacci Resistance ───────────────────────────────────────────
+        fib_levels = self.calcular_niveles_fibonacci(df, FIBONACCI_PERIOD)
+        if fib_levels:
+            close = last["close"]
+            swing_high = fib_levels["swing_high"]
+            fib_236 = fib_levels["fib_236"]
+            # Precio cerca del swing high o fib 0.236 (zona de resistencia)
+            if close >= swing_high * 0.99:
+                score += 1; reason.append("Fibonacci Swing High")
+            elif close >= fib_236 * 0.995 and close <= fib_236 * 1.005:
+                score += 1; reason.append("Fibonacci 0.236 Resistance")
 
         # ── AJUSTE DEL ESCUDO ADX (MEJORADO) ────────────────────────────────
         # Solo aplica el escudo si:
@@ -289,6 +453,37 @@ class RiskManager:
         if notional > available * 0.95:
             return False, f"Saldo insuficiente"
         return True, "OK"
+
+    @staticmethod
+    def calculate_kelly_risk(symbol_stats: Dict, default_risk: float = 0.02) -> float:
+        """
+        Calcula el riesgo sugerido por trade usando el Criterio de Kelly Fraccionario (20% Kelly).
+        Estadísticas requeridas:
+          - win_rate: float (de 0.0 a 1.0)
+          - win_loss_ratio: float (promedio ganancia / promedio pérdida)
+          - total_trades: int
+        Clampa el riesgo resultante entre 1.0% (0.01) y 4.0% (0.04) por seguridad.
+        Si hay menos de 5 trades históricos para el símbolo, se usa default_risk.
+        """
+        total_trades = symbol_stats.get("total_trades", 0)
+        if total_trades < 5:
+            return default_risk
+            
+        win_rate = symbol_stats.get("win_rate", 0.0)
+        win_loss_ratio = symbol_stats.get("win_loss_ratio", 0.0)
+        
+        if win_loss_ratio <= 0:
+            return 0.01
+            
+        # Fórmula de Kelly: f* = p - (1 - p) / b
+        kelly_f = win_rate - (1.0 - win_rate) / win_loss_ratio
+        
+        # Kelly Fraccionario (20% de Kelly para no sobre-apalancar y mantener baja volatilidad)
+        fractional_kelly = kelly_f * 0.20
+        
+        # Clampar entre 1.0% y 4.0%
+        final_risk = max(0.01, min(0.04, fractional_kelly))
+        return final_risk
 
 
 class TrailingStopManager:

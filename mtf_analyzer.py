@@ -44,26 +44,28 @@ class MultiTimeframeAnalyzer:
         conditions = {
             "price_above_ema200": last["close"] > last["ema200"],
             "ema_bullish": last["ema_short"] > last["ema_long"],
-            "macd_bullish": last["macd"] > last["macd_signal"],
+            "macd_bullish": last["macd"] > last["macd_signal"],  # ← Ahora es hard block
             "macd_growing": last["macd"] > prev["macd"],
-            "adx_strong": last["adx"] >= 20,  # Tendencia presente
+            "adx_strong": last["adx"] >= 25,  # Subido de 20→25: umbral real de tendencia
             "ema200": round(last["ema200"], 2),
             "adx": round(last["adx"], 2),
             "macd": round(last["macd"], 4),
         }
 
-        # Todas las condiciones técnicas deben ser verdaderas
+        # Condiciones hard (deben cumplirse TODAS — MACD ahora incluido)
         all_valid = all([
             conditions["price_above_ema200"],
             conditions["ema_bullish"],
-            conditions["macd_bullish"],
             conditions["adx_strong"],
+            conditions["macd_bullish"],  # ← NUEVO: MACD 4H alcista obligatorio
         ])
 
         conditions["valid"] = all_valid
         if not all_valid:
-            failed = [k for k, v in conditions.items() if k not in ["ema200", "adx", "macd"] and v is False]
-            conditions["reason"] = f"Filtros fallidos en 4H: {', '.join(failed)}"
+            # Excluimos keys que no son booleanas ni el flag 'valid' en sí
+            skip_keys = {"ema200", "adx", "macd", "valid", "reason", "macd_growing"}
+            failed = [k for k, v in conditions.items() if k not in skip_keys and v is False]
+            conditions["reason"] = f"Filtros fallidos en 4H: {', '.join(failed) if failed else 'condiciones no cumplidas'}"
         else:
             conditions["reason"] = "Tendencia macro ALCISTA confirmada en 4H"
 
@@ -74,13 +76,16 @@ class MultiTimeframeAnalyzer:
         df_1h: pd.DataFrame,
         macro_conditions: Dict,
         buy_signal_1h: bool,
-        conditions_1h: Dict
+        conditions_1h: Dict,
+        relaxed: bool = False
     ) -> Tuple[bool, Dict]:
         """
         Valida entrada SOLO si:
-        1. La macro 4H está en tendencia alcista
+        1. La macro 4H está en tendencia alcista (O neutral si relaxed=True)
         2. La táctica 1H genera una señal de compra
         3. Se combina la información de ambos timeframes
+
+        Si relaxed=True, macro neutral permite entrada pero penaliza el score.
 
         Devuelve (señal_final, detalles_combinados)
         """
@@ -89,24 +94,39 @@ class MultiTimeframeAnalyzer:
             "tactical_signal": buy_signal_1h,
             "combined_score": 0,
             "filters_applied": {},
+            "relaxed": relaxed,
         }
 
-        # GATE 1: La tendencia macro NO es alcista → RECHAZA entrada
+        # Bandera de penalización por macro inválida en modo relajado
+        macro_relaxed_penalty = 0
+
+        # GATE 1: La tendencia macro NO es alcista → RECHAZA o PENALIZA
         if not macro_conditions.get("valid", False):
-            combined_details["combined_score"] = -999
-            combined_details["reason"] = (
-                f"Macro 4H NO es alcista ({macro_conditions.get('reason', 'Unknown')})"
-            )
-            return False, combined_details
+            if relaxed:
+                # No rechaza, pero aplica penalización de -2 al score combinado
+                macro_relaxed_penalty = 2
+                combined_details["reason"] = (
+                    f"Macro 4H NO es alcista ({macro_conditions.get('reason', 'Unknown')}) "
+                    f"— RELAJADO: entrada permitida con score -2"
+                )
+                combined_details["filters_applied"]["macro_relaxed"] = True
+                # Continúa al GATE 2 en lugar de rechazar
+            else:
+                combined_details["combined_score"] = -999
+                combined_details["reason"] = (
+                    f"Macro 4H NO es alcista ({macro_conditions.get('reason', 'Unknown')})"
+                )
+                return False, combined_details
 
         # GATE 2: Señal táctica no se cumple
         if not buy_signal_1h:
-            combined_details["combined_score"] = conditions_1h.get("score", 0)
+            combined_details["combined_score"] = conditions_1h.get("score", 0) - macro_relaxed_penalty
             combined_details["reason"] = f"Señal 1H insuficiente (score {conditions_1h.get('score', 0)})"
             return False, combined_details
 
         # GATE 3: Si ambas se cumplen, CONFIRMA con bonus macro
-        combined_score = conditions_1h.get("score", 0)
+        # Aplicar penalización de macro relajada si corresponde
+        combined_score = conditions_1h.get("score", 0) - macro_relaxed_penalty
 
         # Bonus si EMA200 muy por debajo del precio (uptrend fuerte)
         if macro_conditions.get("price_above_ema200"):
@@ -133,7 +153,7 @@ class MultiTimeframeAnalyzer:
             f"→ Combined score {combined_score}"
         )
 
-        return combined_score >= 7, combined_details
+        return combined_score >= 6, combined_details
 
 
 class HigherTimeframeFilter:

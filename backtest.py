@@ -65,7 +65,12 @@ class Backtest:
                 if signal:
                     sl, tp, atr = self.strategy.calculate_sl_tp(price, window)
                     capital_per_trade = self.capital / MAX_OPEN_POSITIONS
-                    qty = self.risk.position_size(capital_per_trade, price, sl, RIESGO_POR_TRADE)
+                    
+                    # Criterio de Kelly dinámico en backtesting
+                    stats = self._get_simulated_stats()
+                    risk_pct = self.risk.calculate_kelly_risk(stats, RIESGO_POR_TRADE)
+                    
+                    qty = self.risk.position_size(capital_per_trade, price, sl, risk_pct)
                     qty = min(qty, capital_per_trade / price)
                     notional = qty * price
                     if qty > 0 and notional >= 5:
@@ -80,6 +85,8 @@ class Backtest:
                             "max": price, "score": conds.get("score"),
                             "macro": conds.get("macro_bullish"),
                             "trailing_sl": sl,
+                            "regime": conds.get("regime"),
+                            "risk_pct": risk_pct,
                         }
 
             # Con posición: verifica salida
@@ -116,6 +123,31 @@ class Backtest:
                 if exit_p is None and current["rsi"] < 25:
                     exit_p, exit_r = price, "RSI Crash"
 
+                # 4. Cierre Parcial Seguro (3.0%)
+                if exit_p is None and not position.get("partial_exit_done"):
+                    gain_pct = (price / position["entry"] - 1) * 100
+                    if gain_pct >= 3.0:
+                        exit_qty = position["qty"] * 0.5
+                        sell_fee = (price * exit_qty) * TRADING_FEE_RATE
+                        self.total_fees += sell_fee
+                        
+                        pnl = (price - position["entry"]) * exit_qty - sell_fee - (position["entry"] * exit_qty * TRADING_FEE_RATE)
+                        pct = gain_pct
+                        
+                        self.capital += (price - position["entry"]) * exit_qty - sell_fee
+                        self.trades.append({
+                            "entry": position["entry"], "exit": price,
+                            "qty": exit_qty, "pnl": pnl, "pct": pct,
+                            "reason": "Cierre Parcial (50%)", "dur": hold_time,
+                            "score": position["score"], "macro": position["macro"],
+                            "max_sl": position["max"],
+                            "regime": position["regime"],
+                        })
+                        
+                        position["partial_exit_done"] = True
+                        position["qty"] -= exit_qty
+                        position["trailing_sl"] = position["entry"]
+
                 if exit_p:
                     # Descontar comisión de venta
                     sell_notional = exit_p * position["qty"]
@@ -132,6 +164,8 @@ class Backtest:
                         "score": position["score"], "macro": position["macro"],
                         "max_sl": position["max"],
                         "breakeven": trailing_result.get("breakeven_active", False),
+                        "regime": position.get("regime", "NORMAL"),
+                        "risk_pct": position.get("risk_pct", 0.02),
                     })
                     position = None
 
@@ -190,10 +224,39 @@ class Backtest:
         for t in self.trades[-5:]:
             e = "✅" if t["pnl"] > 0 else "❌"
             be = " [BE]" if t.get("breakeven") else ""
+            reg = f" | reg={t.get('regime', 'N/A')}" if t.get("regime") else ""
+            risk = f" | risk={t.get('risk_pct', 0.0)*100:.1f}%" if t.get("risk_pct") else ""
             logger.info(f"  {e} entrada ${t['entry']:.2f} → ${t['exit']:.2f} | "
                         f"P&L ${t['pnl']:+.2f} ({t['pct']:+.2f}%) | "
-                        f"{t['reason']} | {t['dur']}h | score={t['score']}{be}")
+                        f"{t['reason']} | {t['dur']}h | score={t['score']}{be}{reg}{risk}")
         logger.info(f"{sep}\n")
+
+    def _get_simulated_stats(self) -> dict:
+        closed_trades = self.trades
+        total = len(closed_trades)
+        if total == 0:
+            return {"total_trades": 0, "wins": 0, "losses": 0, "win_rate": 0.0, "avg_win": 0.0, "avg_loss": 0.0, "win_loss_ratio": 0.0}
+            
+        wins_list = [t["pnl"] for t in closed_trades if t["pnl"] > 0]
+        losses_list = [abs(t["pnl"]) for t in closed_trades if t["pnl"] < 0]
+        
+        wins = len(wins_list)
+        losses = len(losses_list)
+        avg_win = sum(wins_list) / wins if wins > 0 else 0.0
+        avg_loss = sum(losses_list) / losses if losses > 0 else 0.0
+        
+        win_rate = wins / total
+        win_loss_ratio = avg_win / avg_loss if avg_loss > 0 else 0.0
+        
+        return {
+            "total_trades": total,
+            "wins": wins,
+            "losses": losses,
+            "win_rate": win_rate,
+            "avg_win": avg_win,
+            "avg_loss": avg_loss,
+            "win_loss_ratio": win_loss_ratio
+        }
 
 
 def main():

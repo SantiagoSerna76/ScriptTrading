@@ -25,6 +25,14 @@ from mtf_analyzer import MultiTimeframeAnalyzer
 from microstructure import OrderBookAnalyzer
 from database import TradeDatabase
 
+# ── Ajuste de Codificación Consola (Windows) ──────────────────────────────────
+if sys.platform.startswith("win"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stderr.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+
 # ── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
@@ -86,6 +94,45 @@ class TradingBot:
         logger.info(f"    Timeframe      : {TIMEFRAME}")
         logger.info(f"    Fee rate       : {TRADING_FEE_RATE*100:.2f}%")
         logger.info("=" * 60)
+
+        # Recuperar posiciones abiertas de la base de datos (evita huérfanas en reinicios)
+        self._load_open_trades_from_db()
+
+    def _load_open_trades_from_db(self):
+        """Carga las posiciones abiertas guardadas en la base de datos para recuperar el estado tras un reinicio."""
+        logger.info("Cargando posiciones abiertas desde la base de datos...")
+        open_trades_db = self.db.get_open_trades()
+        for t in open_trades_db:
+            symbol = t["symbol"]
+            # Solo cargar si el símbolo está en el universo configurado
+            if symbol not in SYMBOLS:
+                logger.warning(f"Posición abierta encontrada para {symbol} en BD pero no está en config.py. Se omitirá del monitoreo del bot.")
+                continue
+
+            # Convertir entry_time string a datetime
+            opened_at = datetime.now()
+            if t.get("entry_time"):
+                try:
+                    opened_at = datetime.fromisoformat(t["entry_time"])
+                except Exception:
+                    pass
+
+            self.open_trades[symbol] = {
+                "trade_id":    t["id"],
+                "entry_price": t["entry_price"],
+                "quantity":    t["entry_quantity"],
+                "stop_loss":   t["stop_loss"],
+                "take_profit": t["take_profit"],
+                "max_price":   t.get("max_price", t["entry_price"]),
+                "opened_at":   opened_at,
+                "trailing_sl": t.get("trailing_sl", t["stop_loss"]),
+                "partial_exit_done": t.get("partial_exit_done", False),
+            }
+            logger.info(
+                f"📈  Recuperado trade abierto #{t['id']} para {symbol}: "
+                f"Entrada=${t['entry_price']:.4f}, Qty={t['entry_quantity']:.6f}, "
+                f"Trailing SL=${self.open_trades[symbol]['trailing_sl']:.4f}"
+            )
 
     def _load_trading_rules(self):
         """Descarga reglas de trading de Binance en tiempo de ejecución."""
@@ -184,6 +231,24 @@ class TradingBot:
 
     def _cycle(self):
         """Un ciclo completo de análisis sobre todos los símbolos."""
+        
+        # --- NUEVO: Interés Compuesto Dinámico ---
+        if self.paper_trading:
+            # En paper trading, sumamos el P&L simulado al capital inicial
+            current_balance = CAPITAL_TOTAL_USDT + self.paper_pnl
+        else:
+            # En real, leemos el saldo real disponible (usando fallback si falla)
+            try:
+                current_balance = float(self.api.get_usdt_balance())
+            except Exception as e:
+                logger.warning(f"Error leyendo balance para compounding: {e}")
+                current_balance = self.capital_per_trade * MAX_OPEN_POSITIONS
+                
+        # Aseguramos un mínimo para evitar divisiones por cero si el balance baja mucho
+        current_balance = max(current_balance, MIN_ORDER_NOTIONAL * MAX_OPEN_POSITIONS)
+        self.capital_per_trade = current_balance / MAX_OPEN_POSITIONS
+        # -----------------------------------------
+
         # 1) Circuit breaker antes de cualquier análisis nuevo
         if not self._circuit_breaker_ok():
             return
@@ -250,7 +315,8 @@ class TradingBot:
             f"{symbol} | precio=${last_1h['close']:.4f} | "
             f"RSI={conds_1h.get('rsi', 0):.1f} | "
             f"ADX={conds_1h.get('adx', 0):.1f} | "
-            f"score={conds_1h.get('score', 0)}/{conds_1h.get('min_score', 7)}"
+            f"score={conds_1h.get('score', 0)}/{conds_1h.get('min_score', 7)} | "
+            f"Régimen: {conds_1h.get('regime', 'NORMAL')}"
         )
 
         # ── Combina señal 1H + validación macro 4H ────────────────────────────
@@ -292,9 +358,13 @@ class TradingBot:
         entry_price = df.iloc[-1]["close"]
         sl, tp, atr = self.strategy.calculate_sl_tp(entry_price, df)
 
+        # Criterio de Kelly Dinámico basado en estadísticas históricas
+        stats = self.db.get_symbol_trades_stats(symbol)
+        risk_pct = self.risk.calculate_kelly_risk(stats, RIESGO_POR_TRADE)
+
         # Sizing con CAP de presupuesto asignado por posición (capital_per_trade)
         qty = self.risk.position_size(
-            self.capital_per_trade, entry_price, sl, RIESGO_POR_TRADE
+            self.capital_per_trade, entry_price, sl, risk_pct
         )
         qty = min(qty, self.capital_per_trade / entry_price)
         qty_rounded = self.round_qty(symbol, qty)
@@ -343,7 +413,9 @@ class TradingBot:
 
         logger.info(f"\n{'=' * 60}")
         logger.info(f"🟢  SEÑAL DE COMPRA: {symbol}")
-        logger.info(f"    Score       : {conds.get('score', 0)}/{self.strategy.MIN_BUY_SCORE}")
+        logger.info(f"    Régimen     : {conds.get('regime', 'NORMAL')} ({conds.get('regime_desc', 'N/A')})")
+        logger.info(f"    Riesgo Kelly: {risk_pct*100:.2f}% (Historial: {stats.get('total_trades', 0)} trades)")
+        logger.info(f"    Score       : {conds.get('score', 0)}/{conds.get('min_score', 7)}")
         logger.info(f"    Precio Est. : ${entry_price:.4f}")
         logger.info(f"    Stop Loss   : ${sl:.4f}  ({(sl/entry_price - 1)*100:.2f}%)")
         logger.info(f"    Take Profit : ${tp:.4f}  (DESACTIVADO - Trailing Stop)")
@@ -398,6 +470,7 @@ class TradingBot:
             "max_price":   entry_price,
             "opened_at":   datetime.now(),
             "trailing_sl": sl,
+            "partial_exit_done": False,
         }
         self.last_buy_time[symbol] = time.time()
         logger.info(f"✅  {mode_tag}Compra ejecutada: {symbol} #{trade_id} a ${entry_price:.4f}")
@@ -413,8 +486,10 @@ class TradingBot:
         last     = df.iloc[-1]
 
         # Actualiza máximo histórico de la posición
+        max_updated = False
         if price > trade["max_price"]:
             trade["max_price"] = price
+            max_updated = True
 
         # ── NUEVO: Trailing Stop dinámico ──────────────────────────────────────
         trailing_result = self.trailing.update_trailing_stop(
@@ -427,9 +502,14 @@ class TradingBot:
         )
 
         current_sl = trailing_result["new_sl"]
+        sl_moved = current_sl != trade["trailing_sl"]
         trade["trailing_sl"] = current_sl
 
-        # Muestra movimiento del SL cada 5 ciclos (si se movió)
+        # Guardar en base de datos si hubo cambios en max_price o en trailing_sl
+        if max_updated or sl_moved:
+            self.db.update_trailing_sl(trade_id, current_sl, trade["max_price"])
+
+        # Muestra movimiento del SL si se movió con respecto al inicial
         if trailing_result["moved_sl"]:
             logger.info(
                 f"{symbol} | Trailing SL actualizado: ${initial_sl:.4f} → ${current_sl:.4f} "
@@ -454,16 +534,22 @@ class TradingBot:
             exit_price, exit_reason = price, "RSI Crash (<25)"
 
         # 4. Cierre parcial opcional de ganancias
-        if exit_price is None:
+        if exit_price is None and not trade.get("partial_exit_done"):
             partial = self.trailing.calculate_partial_exit(
                 entry_price=entry,
                 current_price=price,
                 total_quantity=trade["quantity"],
-                profit_target_pct=2.5,
+                profit_target_pct=3.0,
             )
-            # Nota: Por ahora no implementamos cierre parcial (requiere más lógica)
-            # if partial["should_exit_partial"]:
-            #     logger.info(f"{symbol} | Cierre parcial: {partial['reason']}")
+            if partial.get("should_exit_partial"):
+                logger.info(f"{symbol} | 💰 Cierre parcial activado: {partial['reason']}")
+                self._close_partial_trade(symbol, price, trade_id, partial["reason"], exit_quantity=partial["exit_quantity"])
+                trade["partial_exit_done"] = True
+                
+                # Forzar el trailing stop al break-even (precio de entrada)
+                trade["trailing_sl"] = entry
+                self.db.update_trailing_sl(trade_id, entry, trade["max_price"])
+                logger.info(f"{symbol} | 🛡️ Trailing Stop movido a Break-Even (${entry:.4f})")
 
         if exit_price is None:
             return
@@ -471,8 +557,55 @@ class TradingBot:
         self._close_trade(symbol, exit_price, trade_id, exit_reason)
 
     # ─────────────────────────────────────────────────────────────────────────
-    # Cerrar posición
+    # Cerrar posición (Parcial y Total)
     # ─────────────────────────────────────────────────────────────────────────
+    def _close_partial_trade(self, symbol: str, exit_price: float,
+                             trade_id: int, reason: str, exit_quantity: float):
+        trade = self.open_trades[symbol]
+        entry = trade["entry_price"]
+        
+        exit_quantity_rounded = self.round_qty(symbol, exit_quantity)
+        if exit_quantity_rounded <= 0:
+            return
+            
+        pnl = (exit_price - entry) * exit_quantity_rounded
+
+        if self.paper_trading:
+            # PAPER TRADING: simular venta parcial
+            fee = exit_price * exit_quantity_rounded * TRADING_FEE_RATE
+            self.paper_fees += fee
+            pnl_net = pnl - fee - (entry * exit_quantity_rounded * TRADING_FEE_RATE)
+            self.paper_pnl += pnl_net
+            logger.info(f"📝  [PAPER] Venta PARCIAL simulada: {exit_quantity_rounded} {symbol} @ ${exit_price:.4f} (fee ${fee:.4f})")
+        else:
+            order = self.api.place_order(
+                symbol=symbol, side="SELL", type_="MARKET", quantity=exit_quantity_rounded
+            )
+            if not order:
+                logger.error(f"❌  Orden de venta PARCIAL FALLIDA para {symbol}.")
+                return
+                
+            fills = order.get("fills", [])
+            if fills:
+                total_qty = sum(float(f["qty"]) for f in fills)
+                if total_qty > 0:
+                    exit_price = sum(float(f["price"]) * float(f["qty"]) for f in fills) / total_qty
+                    pnl = (exit_price - entry) * exit_quantity_rounded
+
+        exit_price = self.round_price(symbol, exit_price)
+
+        self.db.log_partial_exit(trade_id, exit_price, exit_quantity_rounded, reason)
+        
+        # Actualizar cantidad en memoria
+        trade["quantity"] -= exit_quantity_rounded
+        
+        mode_tag = "[PAPER] " if self.paper_trading else ""
+        logger.info(f"\n{'=' * 60}")
+        logger.info(f"✨  {mode_tag}VENTA PARCIAL (50%): {symbol} — {reason}")
+        logger.info(f"    Entrada: ${entry:.4f} → Salida: ${exit_price:.4f}")
+        logger.info(f"    P&L Asegurado: ${pnl:.2f}")
+        logger.info(f"{'=' * 60}\n")
+
     def _close_trade(self, symbol: str, exit_price: float,
                      trade_id: int, reason: str):
         trade = self.open_trades[symbol]
