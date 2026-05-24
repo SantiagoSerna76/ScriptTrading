@@ -134,24 +134,23 @@ class MLSignalFilter:
             features['stoch_oversold'] = 1 if last['stoch_k'] < 20 else 0
             features['stoch_cross'] = 1 if last['stoch_k'] > last['stoch_d'] else 0
         
-        # === Order Book features ===
-        if order_book_dict:
-            # imbalance
+        # === Order Book features (solo si hay datos reales) ===
+        if order_book_dict and any(v for v in order_book_dict.values() if v):
             imbalance = order_book_dict.get('imbalance', {})
             features['ob_imbalance_ratio'] = imbalance.get('imbalance_ratio', 1.0)
             features['ob_imbalance_sentiment'] = 1 if imbalance.get('sentiment') == 'BULLISH' else (-1 if imbalance.get('sentiment') == 'BEARISH' else 0)
             features['ob_buy_volume'] = imbalance.get('buy_volume', 0.0)
             features['ob_sell_volume'] = imbalance.get('sell_volume', 0.0)
             
-            # wall detection
             sell_wall = order_book_dict.get('sell_wall', {})
             features['ob_has_sell_wall'] = 1 if sell_wall.get('has_wall') else 0
             features['ob_sell_wall_distance'] = sell_wall.get('distance_pct', 0.0)
             features['ob_sell_wall_severity'] = {'LOW':0, 'MEDIUM':1, 'HIGH':2}.get(sell_wall.get('severity', 'LOW'), 0)
             
-            # liquidity
             liquidity = order_book_dict.get('liquidity', {})
             features['ob_liquidity_ok'] = 1 if liquidity.get('reason') == 'Sufficient liquidity' else 0
+        else:
+            logger.debug("Order Book no disponible — omitiendo features de microestructura (no se envían 0.0 falsos al modelo)")
         
         # === Multi-Timeframe features ===
         if mtf_dict:
