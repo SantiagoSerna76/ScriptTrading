@@ -23,9 +23,9 @@ SYMBOLS = ['INJUSDT', 'ICPUSDT', 'UNIUSDT', 'APTUSDT', 'FILUSDT', 'NEARUSDT']
 # Monitorear todos los SYMBOLS, pero abrir nuevas entradas solo en los aprobados.
 # Nuevas entradas: seleccionados por scanner MTF real (PF >= 1.5, WR >= 55%, trades >= 8).
 ENTRY_SYMBOLS = [
-    "SOLUSDT", 
-    "UNIUSDT", 
-    "RENDERUSDT", 
+    "SOLUSDT",
+    "UNIUSDT",
+    "RENDERUSDT",
     "ARBUSDT",
     "NEARUSDT", # <-- Agregado
     "INJUSDT"   # <-- Agregado
@@ -43,9 +43,9 @@ MIN_ORDER_NOTIONAL   = 5.0     # Mínimo real de Binance para estos altcoins (ve
 
 # ─── Ajuste por Régimen de Mercado ───────────────────────────────────────────
 POSITION_SIZE_TRENDING  = 1.0    # 100% en tendencia
-POSITION_SIZE_RANGING = 0.5    # 50% en rango
-POSITION_SIZE_VOLATILE = 0.7    # 70% en volatilidad
-POSITION_SIZE_UNCERTAIN = 0.3    # 30% en pánico/incertidumbre
+POSITION_SIZE_RANGING   = 0.5    # 50% en rango (sin cambio — peor caso 3 pos = $5, seguro)
+POSITION_SIZE_VOLATILE  = 0.7    # 70% en volatilidad (sin cambio — peor caso 3 pos = $7, seguro)
+POSITION_SIZE_UNCERTAIN = 0.6    # 60% en normal/incertidumbre (subido de 0.3 → x2 ganancias, peor caso 3 pos = $6, seguro)
 
 
 # ─── Relajación de filtros para acelerar acumulación de datos ─────────────────
@@ -98,4 +98,3 @@ POLLING_INTERVAL = 60   # 1 min entre ciclos
 
 # ─── Proxy (para evitar bloqueos IP en Render/nube) ──────────────────────────
 PROXY_URL = os.getenv("PROXY_URL")  # Formato: http://user:pass@ip:port
-
