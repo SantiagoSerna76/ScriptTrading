@@ -319,6 +319,10 @@ class TradeDatabase:
     def log_indicators(self, symbol: str, indicators: Dict):
         conn = self._conn()
         if not conn: return
+        
+        def s_float(val):
+            return float(val) if val is not None else None
+            
         try:
             c = conn.cursor()
             c.execute("""
@@ -326,10 +330,10 @@ class TradeDatabase:
                 (symbol, timestamp, ema_short, ema_long, rsi, atr, adx, volume, volume_sma)
                 VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
             """, (symbol, datetime.now().isoformat(),
-                  indicators.get("ema_short"), indicators.get("ema_long"),
-                  indicators.get("rsi"),       indicators.get("atr"),
-                  indicators.get("adx"),       indicators.get("volume"),
-                  indicators.get("volume_sma")))
+                  s_float(indicators.get("ema_short")), s_float(indicators.get("ema_long")),
+                  s_float(indicators.get("rsi")),       s_float(indicators.get("atr")),
+                  s_float(indicators.get("adx")),       s_float(indicators.get("volume")),
+                  s_float(indicators.get("volume_sma"))))
             conn.commit()
         except Exception as e:
             logger.error(f"Error guardando indicadores: {e}")
