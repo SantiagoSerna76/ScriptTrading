@@ -44,7 +44,7 @@ class MultiTimeframeAnalyzer:
         conditions = {
             "price_above_ema200": last["close"] > last["ema200"],
             "ema_bullish": last["ema_short"] > last["ema_long"],
-            "macd_bullish": last["macd"] > last["macd_signal"],  # ← Ahora es hard block
+            "macd_bullish": last["macd"] > last["macd_signal"],  # ← Informativo/bonus (ya no es hard block)
             "macd_growing": last["macd"] > prev["macd"],
             "adx_strong": last["adx"] >= 20,  # Bajado de 25→20: captura tendencias en desarrollo sin perder calidad
             "ema200": round(last["ema200"], 2),
