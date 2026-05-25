@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 class SQLiteCursorWrapper:
     def __init__(self, cursor):
         self.cursor = cursor
-        
+
     def execute(self, sql, parameters=None):
         sql = sql.replace("SERIAL PRIMARY KEY", "INTEGER PRIMARY KEY AUTOINCREMENT")
         sql = sql.replace("%s", "?")
@@ -26,38 +26,38 @@ class SQLiteCursorWrapper:
             return self.cursor.execute(sql, parameters)
         else:
             return self.cursor.execute(sql)
-            
+
     def fetchone(self):
         return self.cursor.fetchone()
-        
+
     def fetchall(self):
         return self.cursor.fetchall()
-        
+
     def close(self):
         return self.cursor.close()
-        
+
     def __iter__(self):
         return iter(self.cursor)
-        
+
     def __getattr__(self, name):
         return getattr(self.cursor, name)
 
 class SQLiteConnectionWrapper:
     def __init__(self, conn):
         self.conn = conn
-        
+
     def cursor(self):
         return SQLiteCursorWrapper(self.conn.cursor())
-        
+
     def commit(self):
         return self.conn.commit()
-        
+
     def rollback(self):
         return self.conn.rollback()
-        
+
     def close(self):
         return self.conn.close()
-        
+
     def __getattr__(self, name):
         return getattr(self.conn, name)
 
@@ -68,7 +68,7 @@ class TradeDatabase:
         self.db_url = db_url or os.environ.get("DATABASE_URL")
         if not self.db_url:
             self.db_url = "trades.db"
-            
+
         self.is_postgres = self.db_url.startswith("postgresql://") or self.db_url.startswith("postgres://")
         self._init()
 
@@ -110,15 +110,21 @@ class TradeDatabase:
                 conn.commit()
             except Exception:
                 conn.rollback() # Limpiar estado de la transacción fallida
-                
+
             try:
                 c.execute("ALTER TABLE trades ADD COLUMN trailing_sl REAL")
                 conn.commit()
             except Exception:
                 conn.rollback()
-                
+
             try:
                 c.execute("ALTER TABLE trades ADD COLUMN partial_exit_done BOOLEAN DEFAULT FALSE")
+                conn.commit()
+            except Exception:
+                conn.rollback()
+
+            try:
+                c.execute("ALTER TABLE trades ADD COLUMN entry_features TEXT")
                 conn.commit()
             except Exception:
                 conn.rollback()
@@ -283,17 +289,17 @@ class TradeDatabase:
             orig = c.fetchone()
             if not orig:
                 return False
-                
+
             symbol, side, entry_price, entry_qty, entry_time, entry_reason, sl, tp, max_p, tr_sl = orig
-            
+
             # 1. Update original trade to reduce its quantity and set flag
             new_qty = float(entry_qty) - float(exit_quantity)
             c.execute("UPDATE trades SET entry_quantity=%s, partial_exit_done=TRUE WHERE id=%s", (new_qty, int(trade_id)))
-            
+
             # 2. Insert new CLOSED trade record for the exited portion
             pnl = (float(exit_price) - float(entry_price)) * float(exit_quantity)
             pct = (float(exit_price) - float(entry_price)) / float(entry_price) * 100
-            
+
             c.execute("""
                 INSERT INTO trades
                 (symbol, side, entry_price, entry_quantity, entry_time, entry_reason,
@@ -309,7 +315,7 @@ class TradeDatabase:
                 float(max_p) if max_p is not None else None,
                 float(tr_sl) if tr_sl is not None else None, "CLOSED"
             ))
-            
+
             conn.commit()
             logger.info(f"✨ Trade #{trade_id} (Parcial 50% cerrado a ${exit_price:.4f}) → Ganancia asegurada ${pnl:.2f}")
             return True
@@ -326,10 +332,10 @@ class TradeDatabase:
     def log_indicators(self, symbol: str, indicators: Dict):
         conn = self._conn()
         if not conn: return
-        
+
         def s_float(val):
             return float(val) if val is not None else None
-            
+
         try:
             c = conn.cursor()
             c.execute("""
@@ -396,6 +402,86 @@ class TradeDatabase:
         except Exception as e:
             logger.error(f"Error actualizando trailing stop en BD para trade #{trade_id}: {e}")
             return False
+        finally:
+            conn.close()
+
+    def save_entry_features(self, trade_id: int, features, feature_names: list) -> bool:
+        """Guarda el vector de features ML en el momento exacto de apertura del trade.
+        Estos features se usarán para entrenar el modelo real cuando haya 30+ trades.
+        """
+        import json
+        import numpy as np
+        try:
+            arr = np.array(features).flatten()
+            features_dict = {name: round(float(val), 6) for name, val in zip(feature_names, arr)}
+            features_json = json.dumps(features_dict)
+        except Exception as e:
+            logger.error(f"Error serializando entry_features para trade #{trade_id}: {e}")
+            return False
+
+        conn = self._conn()
+        if not conn:
+            return False
+        try:
+            c = conn.cursor()
+            c.execute(
+                "UPDATE trades SET entry_features=%s WHERE id=%s",
+                (features_json, int(trade_id))
+            )
+            conn.commit()
+            logger.info(f"ML features guardados para trade #{trade_id} ({len(feature_names)} features)")
+            return True
+        except Exception as e:
+            logger.error(f"Error guardando entry_features para trade #{trade_id}: {e}")
+            return False
+        finally:
+            conn.close()
+
+    def get_trades_with_features(self):
+        """Retorna trades CERRADOS que tienen entry_features guardados.
+        Excluye cierres parciales (esos son sub-registros del mismo trade original).
+        Retorna lista de dicts con features parseados.
+        """
+        import json
+        conn = self._conn()
+        if not conn:
+            return []
+        try:
+            c = conn.cursor()
+            c.execute("""
+                SELECT id, symbol, entry_price, stop_loss, take_profit,
+                       profit_loss, profit_percent, entry_features, exit_reason,
+                       entry_time, exit_time
+                FROM trades
+                WHERE status = 'CLOSED'
+                  AND entry_features IS NOT NULL
+                  AND LOWER(exit_reason) NOT LIKE %s
+                ORDER BY entry_time ASC
+            """, ('%parcial%',))
+            rows = c.fetchall()
+            result = []
+            for r in rows:
+                try:
+                    features_dict = json.loads(r[7]) if r[7] else {}
+                except Exception:
+                    features_dict = {}
+                result.append({
+                    "id":             r[0],
+                    "symbol":         r[1],
+                    "entry_price":    r[2],
+                    "stop_loss":      r[3],
+                    "take_profit":    r[4],
+                    "profit_loss":    r[5],
+                    "profit_percent": r[6],
+                    "entry_features": features_dict,
+                    "exit_reason":    r[8],
+                    "entry_time":     r[9],
+                    "exit_time":      r[10],
+                })
+            return result
+        except Exception as e:
+            logger.error(f"Error cargando trades con features: {e}")
+            return []
         finally:
             conn.close()
 
@@ -490,20 +576,20 @@ class TradeDatabase:
                   SUM(CASE WHEN profit_loss < 0 THEN 1 ELSE 0 END),
                   COALESCE(AVG(CASE WHEN profit_loss > 0 THEN profit_loss END), 0),
                   COALESCE(AVG(CASE WHEN profit_loss < 0 THEN ABS(profit_loss) END), 0)
-                FROM trades 
+                FROM trades
                 WHERE symbol = %s AND status = 'CLOSED'
             """, (symbol,))
             r = c.fetchone()
-            
+
             total = r[0] or 0
             wins = r[1] or 0
             losses = r[2] or 0
             avg_win = float(r[3]) if r[3] else 0.0
             avg_loss = float(r[4]) if r[4] else 0.0
-            
+
             win_rate = wins / total if total > 0 else 0.0
             win_loss_ratio = avg_win / avg_loss if avg_loss > 0 else 0.0
-            
+
             return {
                 "total_trades": total,
                 "wins": wins,
@@ -534,8 +620,8 @@ class TradeDatabase:
         try:
             c = conn.cursor()
             c.execute("""
-                SELECT profit_loss FROM trades 
-                WHERE symbol = %s AND status = 'CLOSED' 
+                SELECT profit_loss FROM trades
+                WHERE symbol = %s AND status = 'CLOSED'
                 ORDER BY exit_time DESC LIMIT 10
             """, (symbol,))
             rows = c.fetchall()
@@ -559,8 +645,8 @@ class TradeDatabase:
         try:
             c = conn.cursor()
             c.execute("""
-                SELECT exit_time FROM trades 
-                WHERE symbol = %s AND status = 'CLOSED' 
+                SELECT exit_time FROM trades
+                WHERE symbol = %s AND status = 'CLOSED'
                 ORDER BY exit_time DESC LIMIT 1
             """, (symbol,))
             row = c.fetchone()

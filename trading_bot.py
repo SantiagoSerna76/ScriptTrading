@@ -481,7 +481,7 @@ class TradingBot:
                 )
 
                 if win_prob >= ml_threshold:
-                    self._open_trade(symbol, df_1h, mtf_details)
+                    self._open_trade(symbol, df_1h, mtf_details, entry_features=features)
                 else:
                     logger.info(f"{symbol} | Trade rejected by ML filter (low win probability)")
             else:
@@ -490,7 +490,7 @@ class TradingBot:
     # ─────────────────────────────────────────────────────────────────────────
     # Abrir posición (con validación de Order Book)
     # ─────────────────────────────────────────────────────────────────────────
-    def _open_trade(self, symbol: str, df, conds: Dict):
+    def _open_trade(self, symbol: str, df, conds: Dict, entry_features=None):
         # ── Guards de pre-entrada ─────────────────────────────────────────────
 
         # 1. Demasiadas posiciones abiertas
@@ -669,6 +669,13 @@ class TradingBot:
             "trailing_sl":     sl,
             "partial_exit_done": False,
         }
+
+        # Guardar features ML del momento de entrada para entrenamiento futuro
+        if entry_features is not None and self.ml_filter.feature_names:
+            try:
+                self.db.save_entry_features(trade_id, entry_features, self.ml_filter.feature_names)
+            except Exception as e:
+                logger.warning(f"{symbol} | No se pudieron guardar entry_features: {e}")
         self.last_buy_time[symbol] = time.time()
         logger.info(f"✅  {mode_tag}Compra ejecutada: {symbol} #{trade_id} a ${entry_price:.4f}")
         self.notifier.send_message(
