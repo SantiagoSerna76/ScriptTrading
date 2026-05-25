@@ -74,6 +74,11 @@ class TradingBot:
         # Símbolos Activos y Hot-Swap
         self.symbols = SYMBOLS.copy()
         self.entry_symbols = ENTRY_SYMBOLS.copy()
+        
+        # Garantizar que todos los ENTRY_SYMBOLS sean monitoreados y analizados
+        for s in self.entry_symbols:
+            if s not in self.symbols:
+                self.symbols.append(s)
 
         # Reglas de precisión dinámicas
         self.trading_rules: Dict[str, Dict] = {}

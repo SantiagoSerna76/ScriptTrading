@@ -217,9 +217,12 @@ class TradeDatabase:
                  entry_reason, stop_loss, take_profit, max_price, trailing_sl, status)
                 VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 RETURNING id
-            """, (symbol, "BUY", entry_price, quantity,
+            """, (symbol, "BUY", float(entry_price), float(quantity),
                   datetime.now().isoformat(), reason,
-                  stop_loss, take_profit, entry_price, stop_loss, "OPEN"))
+                  float(stop_loss) if stop_loss is not None else None,
+                  float(take_profit) if take_profit is not None else None,
+                  float(entry_price),
+                  float(stop_loss) if stop_loss is not None else None, "OPEN"))
             trade_id = c.fetchone()[0]
             conn.commit()
             logger.info(f"Trade abierto #{trade_id}: {symbol} @ ${entry_price:.4f}")
@@ -249,16 +252,16 @@ class TradeDatabase:
                 return False
 
             entry_price, entry_qty = row
-            pnl     = (exit_price - entry_price) * exit_quantity
-            pct     = (exit_price - entry_price) / entry_price * 100
+            pnl     = (float(exit_price) - float(entry_price)) * float(exit_quantity)
+            pct     = (float(exit_price) - float(entry_price)) / float(entry_price) * 100
 
             c.execute("""
                 UPDATE trades
                 SET exit_price=%s, exit_quantity=%s, exit_time=%s,
                     exit_reason=%s, profit_loss=%s, profit_percent=%s, status=%s
                 WHERE id=%s
-            """, (exit_price, exit_quantity, datetime.now().isoformat(),
-                  reason, pnl, pct, "CLOSED", trade_id))
+            """, (float(exit_price), float(exit_quantity), datetime.now().isoformat(),
+                  reason, float(pnl), float(pct), "CLOSED", int(trade_id)))
             conn.commit()
 
             emoji = "✅" if pnl >= 0 else "❌"
@@ -284,12 +287,12 @@ class TradeDatabase:
             symbol, side, entry_price, entry_qty, entry_time, entry_reason, sl, tp, max_p, tr_sl = orig
             
             # 1. Update original trade to reduce its quantity and set flag
-            new_qty = entry_qty - exit_quantity
-            c.execute("UPDATE trades SET entry_quantity=%s, partial_exit_done=TRUE WHERE id=%s", (new_qty, trade_id))
+            new_qty = float(entry_qty) - float(exit_quantity)
+            c.execute("UPDATE trades SET entry_quantity=%s, partial_exit_done=TRUE WHERE id=%s", (new_qty, int(trade_id)))
             
             # 2. Insert new CLOSED trade record for the exited portion
-            pnl = (exit_price - entry_price) * exit_quantity
-            pct = (exit_price - entry_price) / entry_price * 100
+            pnl = (float(exit_price) - float(entry_price)) * float(exit_quantity)
+            pct = (float(exit_price) - float(entry_price)) / float(entry_price) * 100
             
             c.execute("""
                 INSERT INTO trades
@@ -298,9 +301,13 @@ class TradeDatabase:
                  profit_loss, profit_percent, max_price, trailing_sl, status)
                 VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
             """, (
-                symbol, side, entry_price, exit_quantity, entry_time, entry_reason,
-                exit_price, exit_quantity, datetime.now().isoformat(), reason, sl, tp,
-                pnl, pct, max_p, tr_sl, "CLOSED"
+                symbol, side, float(entry_price), float(exit_quantity), entry_time, entry_reason,
+                float(exit_price), float(exit_quantity), datetime.now().isoformat(), reason,
+                float(sl) if sl is not None else None,
+                float(tp) if tp is not None else None,
+                float(pnl), float(pct),
+                float(max_p) if max_p is not None else None,
+                float(tr_sl) if tr_sl is not None else None, "CLOSED"
             ))
             
             conn.commit()
@@ -382,7 +389,8 @@ class TradeDatabase:
                 UPDATE trades
                 SET trailing_sl=%s, max_price=%s
                 WHERE id=%s
-            """, (trailing_sl, max_price, trade_id))
+            """, (float(trailing_sl) if trailing_sl is not None else None,
+                  float(max_price) if max_price is not None else None, int(trade_id)))
             conn.commit()
             return True
         except Exception as e:
