@@ -26,7 +26,9 @@ ENTRY_SYMBOLS = [
     "SOLUSDT", 
     "UNIUSDT", 
     "RENDERUSDT", 
-    "ARBUSDT"
+    "ARBUSDT",
+    "NEARUSDT", # <-- Agregado
+    "INJUSDT"   # <-- Agregado
 ]
 
 # Reset estadístico tras auditoría cuantitativa. No borra la DB; solo evita mezclar

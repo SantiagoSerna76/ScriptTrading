@@ -381,10 +381,18 @@ class TradingBot:
             return
 
         # ── Sin posición → verificar entrada ────────────────────────────────
-        buy_signal_1h, conds_1h = self.strategy.check_buy_signal(df_1h)
+        try:
+            buy_signal_1h, conds_1h = self.strategy.check_buy_signal(df_1h)
+        except Exception as e:
+            logger.error(f"{symbol} | Error en check_buy_signal: {e}", exc_info=True)
+            return
 
         # ── Análisis de Sentimiento (Funding Rate) ─────────────────────────
-        funding_rate = self.api.get_funding_rate(symbol)
+        try:
+            funding_rate = self.api.get_funding_rate(symbol)
+        except Exception as e:
+            logger.warning(f"{symbol} | Error obteniendo funding rate: {e}")
+            funding_rate = None
 
         # Agrega detalles a conds_1h
         conds_1h["close_price"] = last_1h["close"]

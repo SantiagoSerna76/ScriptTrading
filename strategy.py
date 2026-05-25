@@ -348,11 +348,11 @@ class StrategySignals:
         atr = df.iloc[-1]["atr"]
         sl = entry - SL_ATR_MULT * atr
         
-        # PROTECCIÓN DE VOLATILIDAD: Si el SL natural (ATR) es > 3% del precio de entrada,
+        # PROTECCIÓN DE VOLATILIDAD: Si el SL natural (ATR) es > 4% del precio de entrada,
         # la moneda está demasiado volátil. Retornamos None en sl para que el llamante rechace el trade.
         # NO usamos un cap artificial (eso rompe el R:R). Mejor no entrar.
         sl_distance_pct = (entry - sl) / entry * 100
-        if sl_distance_pct > 3.0:
+        if sl_distance_pct > 4.0:
             logger.warning(
                 f"Volatilidad excesiva detectada: SL natural a -{sl_distance_pct:.1f}% del entry "
                 f"(ATR={atr:.4f}). Trade RECHAZADO para proteger el R:R."
