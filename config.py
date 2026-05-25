@@ -55,7 +55,7 @@ RELAXED_MACRO_SYMBOLS = []
 
 # ─── Protección diaria ───────────────────────────────────────────────────────
 MAX_DAILY_LOSS_USDT  = 8.0     # Si perdemos $8 en el día → circuit breaker (ajustado a 3 posiciones × $167)
-MAX_DAILY_TRADES     = 6       # No más de 6 trades por día (5 símbolos = menor frecuencia)
+MAX_DAILY_TRADES     = 10      # Subido de 6→10 en paper trading para acelerar recolección de datos ML
 
 # ─── Cooldown entre entradas ─────────────────────────────────────────
 MIN_BUY_COOLDOWN_H   = 4      # 4h mínimo entre entradas del mismo par (evita señales falsas consecutivas)
