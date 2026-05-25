@@ -1,28 +1,87 @@
-import sqlite3
+import os
 import logging
 from datetime import datetime, date
 from typing import Optional, List, Dict
-from config import DB_FILE
+import json
+import sqlite3
+
+try:
+    import psycopg2
+    from psycopg2 import errors
+    PSYCOPG2_AVAILABLE = True
+except ImportError:
+    PSYCOPG2_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
+# Wrapper classes to adapt SQLite connections to match PostgreSQL parameter syntax (%s -> ?)
+class SQLiteCursorWrapper:
+    def __init__(self, cursor):
+        self.cursor = cursor
+        
+    def execute(self, sql, parameters=None):
+        sql = sql.replace("SERIAL PRIMARY KEY", "INTEGER PRIMARY KEY AUTOINCREMENT")
+        sql = sql.replace("%s", "?")
+        if parameters is not None:
+            return self.cursor.execute(sql, parameters)
+        else:
+            return self.cursor.execute(sql)
+            
+    def fetchone(self):
+        return self.cursor.fetchone()
+        
+    def fetchall(self):
+        return self.cursor.fetchall()
+        
+    def close(self):
+        return self.cursor.close()
+        
+    def __iter__(self):
+        return iter(self.cursor)
+        
+    def __getattr__(self, name):
+        return getattr(self.cursor, name)
+
+class SQLiteConnectionWrapper:
+    def __init__(self, conn):
+        self.conn = conn
+        
+    def cursor(self):
+        return SQLiteCursorWrapper(self.conn.cursor())
+        
+    def commit(self):
+        return self.conn.commit()
+        
+    def rollback(self):
+        return self.conn.rollback()
+        
+    def close(self):
+        return self.conn.close()
+        
+    def __getattr__(self, name):
+        return getattr(self.conn, name)
 
 class TradeDatabase:
-    """Base de datos de trades — SQLite con índices y estadísticas diarias."""
+    """Base de datos de trades — Soporta PostgreSQL y SQLite de forma transparente."""
 
-    def __init__(self, db_file: str = DB_FILE):
-        self.db_file = db_file
+    def __init__(self, db_url=None):
+        self.db_url = db_url or os.environ.get("DATABASE_URL")
+        if not self.db_url:
+            self.db_url = "trades.db"
+            
+        self.is_postgres = self.db_url.startswith("postgresql://") or self.db_url.startswith("postgres://")
         self._init()
 
     # ── Inicialización ────────────────────────────────────────────────────────
     def _init(self):
         conn = self._conn()
+        if not conn: return
         try:
             c = conn.cursor()
 
             c.execute("""
                 CREATE TABLE IF NOT EXISTS trades (
-                    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                    id             SERIAL PRIMARY KEY,
                     symbol         TEXT    NOT NULL,
                     side           TEXT    NOT NULL DEFAULT 'BUY',
                     entry_price    REAL    NOT NULL,
@@ -40,29 +99,33 @@ class TradeDatabase:
                     max_price      REAL,
                     trailing_sl    REAL,
                     status         TEXT    DEFAULT 'OPEN',
-                    partial_exit_done BOOLEAN DEFAULT 0
+                    partial_exit_done BOOLEAN DEFAULT FALSE
                 )
             """)
+            conn.commit()
 
-            # Migración: Añadir columnas si no existen en base de datos previa
+            # Migración: Añadir columnas si no existen
             try:
                 c.execute("ALTER TABLE trades ADD COLUMN max_price REAL")
-            except sqlite3.OperationalError:
-                pass  # La columna ya existe
-
-            try:
-                c.execute("ALTER TABLE trades ADD COLUMN trailing_sl REAL")
-            except sqlite3.OperationalError:
-                pass  # La columna ya existe
+                conn.commit()
+            except Exception:
+                conn.rollback() # Limpiar estado de la transacción fallida
                 
             try:
-                c.execute("ALTER TABLE trades ADD COLUMN partial_exit_done BOOLEAN DEFAULT 0")
-            except sqlite3.OperationalError:
-                pass  # La columna ya existe
+                c.execute("ALTER TABLE trades ADD COLUMN trailing_sl REAL")
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                
+            try:
+                c.execute("ALTER TABLE trades ADD COLUMN partial_exit_done BOOLEAN DEFAULT FALSE")
+                conn.commit()
+            except Exception:
+                conn.rollback()
 
             c.execute("""
                 CREATE TABLE IF NOT EXISTS indicators (
-                    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                    id         SERIAL PRIMARY KEY,
                     symbol     TEXT NOT NULL,
                     timestamp  TEXT NOT NULL,
                     ema_short  REAL,
@@ -74,12 +137,14 @@ class TradeDatabase:
                     volume_sma REAL
                 )
             """)
+            conn.commit()
 
             # Índices para consultas rápidas
             c.execute("CREATE INDEX IF NOT EXISTS idx_trades_status  ON trades (status)")
             c.execute("CREATE INDEX IF NOT EXISTS idx_trades_symbol  ON trades (symbol)")
             c.execute("CREATE INDEX IF NOT EXISTS idx_trades_exit    ON trades (exit_time)")
             c.execute("CREATE INDEX IF NOT EXISTS idx_indicators_sym ON indicators (symbol, timestamp)")
+            conn.commit()
 
             c.execute("""
                 CREATE TABLE IF NOT EXISTS system_config (
@@ -87,30 +152,34 @@ class TradeDatabase:
                     value TEXT NOT NULL
                 )
             """)
-
             conn.commit()
-            logger.info(f"Base de datos lista y migrada: {self.db_file}")
+            logger.info("Base de datos inicializada y migrada correctamente.")
         except Exception as e:
             logger.error(f"Error inicializando base de datos: {e}")
         finally:
             conn.close()
 
     def _conn(self):
-        conn = sqlite3.connect(self.db_file)
-        # Habilitar Write-Ahead Logging (WAL) para concurrencia (Flask/Bot)
-        conn.execute("PRAGMA journal_mode=WAL;")
-        return conn
+        if not self.db_url:
+            return None
+        if self.is_postgres:
+            if not PSYCOPG2_AVAILABLE:
+                raise ImportError("Se requiere psycopg2 para conectar a PostgreSQL, pero no está disponible.")
+            return psycopg2.connect(self.db_url)
+        else:
+            return SQLiteConnectionWrapper(sqlite3.connect(self.db_url))
 
     # ── Configuración Dinámica (Hot-Swapping) ─────────────────────────────────
     def set_config_value(self, key: str, value: str) -> None:
         """Guarda un valor de configuración dinámica en la base de datos."""
         conn = self._conn()
+        if not conn: return
         try:
             c = conn.cursor()
             c.execute("""
                 INSERT INTO system_config (key, value)
-                VALUES (?, ?)
-                ON CONFLICT(key) DO UPDATE SET value=excluded.value
+                VALUES (%s, %s)
+                ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value
             """, (key, value))
             conn.commit()
         except Exception as e:
@@ -121,9 +190,10 @@ class TradeDatabase:
     def get_config_value(self, key: str, default_val: str = None) -> str:
         """Obtiene un valor de configuración de la base de datos."""
         conn = self._conn()
+        if not conn: return default_val
         try:
             c = conn.cursor()
-            c.execute("SELECT value FROM system_config WHERE key=?", (key,))
+            c.execute("SELECT value FROM system_config WHERE key=%s", (key,))
             row = c.fetchone()
             if row:
                 return row[0]
@@ -138,17 +208,19 @@ class TradeDatabase:
     def log_entry(self, symbol: str, entry_price: float, quantity: float,
                   stop_loss: float, take_profit: float, reason: str) -> int:
         conn = self._conn()
+        if not conn: return -1
         try:
             c = conn.cursor()
             c.execute("""
                 INSERT INTO trades
                 (symbol, side, entry_price, entry_quantity, entry_time,
                  entry_reason, stop_loss, take_profit, max_price, trailing_sl, status)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                RETURNING id
             """, (symbol, "BUY", entry_price, quantity,
                   datetime.now().isoformat(), reason,
                   stop_loss, take_profit, entry_price, stop_loss, "OPEN"))
-            trade_id = c.lastrowid
+            trade_id = c.fetchone()[0]
             conn.commit()
             logger.info(f"Trade abierto #{trade_id}: {symbol} @ ${entry_price:.4f}")
             return trade_id
@@ -167,9 +239,10 @@ class TradeDatabase:
     def log_exit(self, trade_id: int, exit_price: float,
                  exit_quantity: float, reason: str) -> bool:
         conn = self._conn()
+        if not conn: return False
         try:
             c = conn.cursor()
-            c.execute("SELECT entry_price, entry_quantity FROM trades WHERE id=?",
+            c.execute("SELECT entry_price, entry_quantity FROM trades WHERE id=%s",
                       (trade_id,))
             row = c.fetchone()
             if not row:
@@ -181,9 +254,9 @@ class TradeDatabase:
 
             c.execute("""
                 UPDATE trades
-                SET exit_price=?, exit_quantity=?, exit_time=?,
-                    exit_reason=?, profit_loss=?, profit_percent=?, status=?
-                WHERE id=?
+                SET exit_price=%s, exit_quantity=%s, exit_time=%s,
+                    exit_reason=%s, profit_loss=%s, profit_percent=%s, status=%s
+                WHERE id=%s
             """, (exit_price, exit_quantity, datetime.now().isoformat(),
                   reason, pnl, pct, "CLOSED", trade_id))
             conn.commit()
@@ -200,9 +273,10 @@ class TradeDatabase:
     def log_partial_exit(self, trade_id: int, exit_price: float, exit_quantity: float, reason: str) -> bool:
         """Registra una salida parcial reduciendo la cantidad del trade original y creando un registro de ganancia cerrada."""
         conn = self._conn()
+        if not conn: return False
         try:
             c = conn.cursor()
-            c.execute("SELECT symbol, side, entry_price, entry_quantity, entry_time, entry_reason, stop_loss, take_profit, max_price, trailing_sl FROM trades WHERE id=?", (trade_id,))
+            c.execute("SELECT symbol, side, entry_price, entry_quantity, entry_time, entry_reason, stop_loss, take_profit, max_price, trailing_sl FROM trades WHERE id=%s", (trade_id,))
             orig = c.fetchone()
             if not orig:
                 return False
@@ -211,7 +285,7 @@ class TradeDatabase:
             
             # 1. Update original trade to reduce its quantity and set flag
             new_qty = entry_qty - exit_quantity
-            c.execute("UPDATE trades SET entry_quantity=?, partial_exit_done=1 WHERE id=?", (new_qty, trade_id))
+            c.execute("UPDATE trades SET entry_quantity=%s, partial_exit_done=TRUE WHERE id=%s", (new_qty, trade_id))
             
             # 2. Insert new CLOSED trade record for the exited portion
             pnl = (exit_price - entry_price) * exit_quantity
@@ -222,7 +296,7 @@ class TradeDatabase:
                 (symbol, side, entry_price, entry_quantity, entry_time, entry_reason,
                  exit_price, exit_quantity, exit_time, exit_reason, stop_loss, take_profit,
                  profit_loss, profit_percent, max_price, trailing_sl, status)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
             """, (
                 symbol, side, entry_price, exit_quantity, entry_time, entry_reason,
                 exit_price, exit_quantity, datetime.now().isoformat(), reason, sl, tp,
@@ -244,12 +318,13 @@ class TradeDatabase:
 
     def log_indicators(self, symbol: str, indicators: Dict):
         conn = self._conn()
+        if not conn: return
         try:
             c = conn.cursor()
             c.execute("""
                 INSERT INTO indicators
                 (symbol, timestamp, ema_short, ema_long, rsi, atr, adx, volume, volume_sma)
-                VALUES (?,?,?,?,?,?,?,?,?)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
             """, (symbol, datetime.now().isoformat(),
                   indicators.get("ema_short"), indicators.get("ema_long"),
                   indicators.get("rsi"),       indicators.get("atr"),
@@ -264,6 +339,7 @@ class TradeDatabase:
     # ── Lectura ───────────────────────────────────────────────────────────────
     def get_open_trades(self) -> List[Dict]:
         conn = self._conn()
+        if not conn: return []
         try:
             c = conn.cursor()
             c.execute("""
@@ -295,12 +371,13 @@ class TradeDatabase:
     def update_trailing_sl(self, trade_id: int, trailing_sl: float, max_price: float) -> bool:
         """Actualiza el trailing stop loss y el precio máximo en la base de datos para persistencia."""
         conn = self._conn()
+        if not conn: return False
         try:
             c = conn.cursor()
             c.execute("""
                 UPDATE trades
-                SET trailing_sl=?, max_price=?
-                WHERE id=?
+                SET trailing_sl=%s, max_price=%s
+                WHERE id=%s
             """, (trailing_sl, max_price, trade_id))
             conn.commit()
             return True
@@ -316,15 +393,16 @@ class TradeDatabase:
             day = date.today()
         day_str = day.isoformat()
         conn = self._conn()
+        if not conn: return 0.0
         try:
             c = conn.cursor()
             c.execute("""
                 SELECT COALESCE(SUM(profit_loss), 0)
                 FROM trades
                 WHERE status='CLOSED'
-                  AND DATE(exit_time) = ?
-            """, (day_str,))
-            return c.fetchone()[0]
+                  AND exit_time LIKE %s
+            """, (day_str + '%',))
+            return float(c.fetchone()[0] or 0.0)
         except Exception as e:
             logger.error(f"Error calculando P&L diario: {e}")
             return 0.0
@@ -337,13 +415,14 @@ class TradeDatabase:
             day = date.today()
         day_str = day.isoformat()
         conn = self._conn()
+        if not conn: return 0
         try:
             c = conn.cursor()
             c.execute("""
                 SELECT COUNT(*) FROM trades
-                WHERE status='CLOSED' AND DATE(exit_time) = ?
-            """, (day_str,))
-            return c.fetchone()[0]
+                WHERE status='CLOSED' AND exit_time LIKE %s
+            """, (day_str + '%',))
+            return int(c.fetchone()[0])
         except Exception as e:
             return 0
         finally:
@@ -351,6 +430,7 @@ class TradeDatabase:
 
     def get_trades_stats(self) -> Dict:
         conn = self._conn()
+        if not conn: return {}
         try:
             c = conn.cursor()
             c.execute("""
@@ -374,7 +454,7 @@ class TradeDatabase:
                 "losses":                r[2] or 0,
                 "win_rate":              round(wins / total * 100, 2) if total else 0,
                 "total_pnl":             round(r[3], 2),
-                "avg_percent_per_trade": round(r[4], 2),
+                "avg_percent_per_trade": round(float(r[4]), 2) if r[4] else 0.0,
                 "win_amount":            round(r[5], 2),
                 "loss_amount":           round(r[6], 2),
             }
@@ -387,6 +467,8 @@ class TradeDatabase:
     def get_symbol_trades_stats(self, symbol: str) -> Dict:
         """Obtiene estadísticas de rendimiento históricas para un símbolo específico."""
         conn = self._conn()
+        if not conn:
+            return {"total_trades": 0, "wins": 0, "losses": 0, "win_rate": 0.0, "avg_win": 0.0, "avg_loss": 0.0, "win_loss_ratio": 0.0}
         try:
             c = conn.cursor()
             c.execute("""
@@ -397,15 +479,15 @@ class TradeDatabase:
                   COALESCE(AVG(CASE WHEN profit_loss > 0 THEN profit_loss END), 0),
                   COALESCE(AVG(CASE WHEN profit_loss < 0 THEN ABS(profit_loss) END), 0)
                 FROM trades 
-                WHERE symbol = ? AND status = 'CLOSED'
+                WHERE symbol = %s AND status = 'CLOSED'
             """, (symbol,))
             r = c.fetchone()
             
             total = r[0] or 0
             wins = r[1] or 0
             losses = r[2] or 0
-            avg_win = r[3] or 0.0
-            avg_loss = r[4] or 0.0
+            avg_win = float(r[3]) if r[3] else 0.0
+            avg_loss = float(r[4]) if r[4] else 0.0
             
             win_rate = wins / total if total > 0 else 0.0
             win_loss_ratio = avg_win / avg_loss if avg_loss > 0 else 0.0
@@ -436,11 +518,12 @@ class TradeDatabase:
     def get_consecutive_losses(self, symbol: str) -> int:
         """Cuenta cuántas pérdidas consecutivas lleva un símbolo."""
         conn = self._conn()
+        if not conn: return 0
         try:
             c = conn.cursor()
             c.execute("""
                 SELECT profit_loss FROM trades 
-                WHERE symbol = ? AND status = 'CLOSED' 
+                WHERE symbol = %s AND status = 'CLOSED' 
                 ORDER BY exit_time DESC LIMIT 10
             """, (symbol,))
             rows = c.fetchall()
@@ -460,11 +543,12 @@ class TradeDatabase:
     def get_last_exit_time(self, symbol: str) -> float:
         """Devuelve el timestamp de la última vez que se cerró un trade de este símbolo."""
         conn = self._conn()
+        if not conn: return 0.0
         try:
             c = conn.cursor()
             c.execute("""
                 SELECT exit_time FROM trades 
-                WHERE symbol = ? AND status = 'CLOSED' 
+                WHERE symbol = %s AND status = 'CLOSED' 
                 ORDER BY exit_time DESC LIMIT 1
             """, (symbol,))
             row = c.fetchone()
@@ -476,4 +560,3 @@ class TradeDatabase:
             return 0.0
         finally:
             conn.close()
-
