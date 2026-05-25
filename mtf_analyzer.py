@@ -130,7 +130,7 @@ class MultiTimeframeAnalyzer:
         # Bonus si EMA200 muy por debajo del precio (uptrend fuerte)
         if macro_conditions.get("price_above_ema200"):
             price_above_ema200_pct = (
-                conditions_1h.get("close_price", 0) / macro_conditions.get("ema200", 1) - 1
+                conditions_1h.get("close_price", 0) / (macro_conditions.get("ema200") or 1e-8) - 1
             ) * 100
             if price_above_ema200_pct > 5:
                 combined_score += 1  # +1 por uptrend establecido

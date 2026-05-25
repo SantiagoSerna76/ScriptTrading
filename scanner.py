@@ -8,6 +8,8 @@ import logging
 import time
 import sys
 import io
+import json
+from datetime import datetime
 from backtest import Backtest
 from config import CAPITAL_TOTAL_USDT, TRADING_FEE_RATE
 
@@ -32,7 +34,79 @@ def run_quick_backtest(symbol: str, days: int = 60) -> dict:
     """Ejecuta el MISMO motor de backtest que el bot, no una simulación simplificada."""
     bt = Backtest(symbol, CAPITAL_TOTAL_USDT)
     bt.run(days=days, print_results=False)
-    return bt.summary()
+    summary = bt.summary()
+    
+    # ── Walk-Forward Validation (Anti-Overfitting) ──
+    summary["wf_valid"] = False
+    if len(bt.trades) >= 6:
+        # Dividir secuencialmente en 3 ventanas de tiempo/trades
+        chunk_size = len(bt.trades) // 3
+        chunks = [
+            bt.trades[:chunk_size],
+            bt.trades[chunk_size:chunk_size*2],
+            bt.trades[chunk_size*2:]
+        ]
+        
+        consistent = True
+        for chunk in chunks:
+            if not chunk: continue
+            gw = sum(t["pnl"] for t in chunk if t["pnl"] > 0)
+            gl = abs(sum(t["pnl"] for t in chunk if t["pnl"] <= 0))
+            pf_chunk = gw / gl if gl > 0 else 999.0
+            
+            # Se exige rentabilidad o leve pérdida aceptable (PF >= 0.75) en todas las ventanas
+            if pf_chunk < 0.75:
+                consistent = False
+                break
+                
+        summary["wf_valid"] = consistent
+        
+    return summary
+
+def run_dynamic_scanner(db, notifier=None):
+    """
+    Ejecuta el escáner asíncronamente desde el dashboard/Flask y actualiza 
+    la base de datos directamente con las mejores monedas (Hot-Swap).
+    """
+    if notifier:
+        notifier.send_message("🔍 *Iniciando escáner dinámico en background...* Evaluando 30 altcoins (60 días).")
+    
+    logger.info("Iniciando escaneo en background...")
+    results = []
+    for i, sym in enumerate(SCAN_SYMBOLS):
+        try:
+            r = run_quick_backtest(sym, days=60)
+            if "error" not in r and r["trades"] > 0:
+                results.append(r)
+        except Exception as e:
+            logger.error(f"Error escaneando {sym}: {e}")
+        time.sleep(0.1)
+    
+    results.sort(key=lambda x: x["pnl"], reverse=True)
+    
+    # Filtro estricto + Walk-Forward Validation (mínimo 10 trades para validez estadística)
+    profitable = [r for r in results if r["pnl"] > 0 and r["pf"] >= 1.5 and r["wr"] >= 55 and r["trades"] >= 10 and r.get("wf_valid", False)]
+    
+    if profitable:
+        syms = [r["symbol"] for r in profitable]
+        total_pnl = sum(r["pnl"] for r in profitable)
+        
+        # Guardar dinámicamente en SQLite (Hot-Swap)
+        db.set_config_value("ENTRY_SYMBOLS", json.dumps(syms))
+        db.set_config_value("LAST_SCAN_TIME", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+        
+        if notifier:
+            msg = f"✅ *Escaneo completado.*\n\n🔄 *Hot-Swap Activo* ({len(syms)} monedas):\n"
+            for r in profitable:
+                msg += f"• `{r['symbol']}` (PF: {r['pf']:.2f}, WR: {r['wr']:.0f}%)\n"
+            msg += f"\n_P&L Estimado_: `${total_pnl:+.2f}`"
+            notifier.send_message(msg)
+            
+        logger.info(f"Hot-Swap completado. ENTRY_SYMBOLS actualizados a: {syms}")
+    else:
+        logger.warning("Ningún activo pasó el filtro en el escaneo dinámico.")
+        if notifier:
+            notifier.send_message("⚠️ *Escaneo completado.* Ningún activo pasó los filtros de rentabilidad mínima. Se mantienen las monedas actuales.")
 
 
 def main():
@@ -73,7 +147,7 @@ def main():
         print(f"  {emoji} {r['symbol']:<10} {r['trades']:>5} {wl:>7} {r['wr']:>4.0f}% ${r['pnl']:>+7.2f} {r['roi']:>+6.2f}% {r['pf']:>5.2f} {r['avg_dur']:>6.1f} ${r['fees']:>5.2f}")
 
     # Recomendar configuración
-    profitable = [r for r in results if r["pnl"] > 0 and r["pf"] >= 1.5 and r["wr"] >= 55 and r["trades"] >= 8]
+    profitable = [r for r in results if r["pnl"] > 0 and r["pf"] >= 1.5 and r["wr"] >= 55 and r["trades"] >= 10 and r.get("wf_valid", False)]
     print(f"\n{'=' * 80}")
     if profitable:
         syms = [r["symbol"] for r in profitable]

@@ -71,13 +71,17 @@ class TradingBot:
         self.notifier = TelegramNotifier()
         self.ml_filter = MLSignalFilter()
 
+        # Símbolos Activos y Hot-Swap
+        self.symbols = SYMBOLS.copy()
+        self.entry_symbols = ENTRY_SYMBOLS.copy()
+
         # Reglas de precisión dinámicas
         self.trading_rules: Dict[str, Dict] = {}
         self._load_trading_rules()
 
         # Estado en memoria
         self.open_trades: Dict[str, Dict]  = {}
-        self.last_buy_time: Dict[str, float] = {s: 0.0 for s in SYMBOLS}
+        self.last_buy_time: Dict[str, float] = {s: 0.0 for s in self.symbols}
         self.last_daily_summary = datetime.now().date()
 
         # Capital por posición
@@ -97,7 +101,7 @@ class TradingBot:
         logger.info(f"    Capital/trade  : ${self.capital_per_trade:.2f}")
         logger.info(f"    Riesgo/trade   : {RIESGO_POR_TRADE * 100:.1f} %")
         logger.info(f"    Posiciones max : {MAX_OPEN_POSITIONS}")
-        logger.info(f"    Símbolos       : {SYMBOLS}")
+        logger.info(f"    Símbolos       : {self.symbols}")
         logger.info(f"    Timeframe      : {TIMEFRAME}")
         logger.info(f"    Fee rate       : {TRADING_FEE_RATE*100:.2f}%")
         logger.info("=" * 60)
@@ -117,10 +121,15 @@ class TradingBot:
         open_trades_db = self.db.get_open_trades()
         for t in open_trades_db:
             symbol = t["symbol"]
-            # Solo cargar si el símbolo está en el universo configurado
-            if symbol not in SYMBOLS:
-                logger.warning(f"Posición abierta encontrada para {symbol} en BD pero no está en config.py. Se omitirá del monitoreo del bot.")
-                continue
+            # Failsafe Hot-Swap: Asegurar que las posiciones huérfanas NO se abandonen
+            if symbol not in self.symbols:
+                logger.warning(f"⚠️ Posición abierta huérfana detectada para {symbol}. Se agrega al monitoreo activo de forma forzosa (Hot-Swap Failsafe).")
+                self.symbols.append(symbol)
+                if symbol not in self.trading_rules:
+                    rules = self.api.get_symbol_rules(symbol)
+                    self.trading_rules[symbol] = rules if rules else {"step_size": 0.01, "tick_size": 0.01, "min_notional": MIN_ORDER_NOTIONAL}
+                if symbol not in self.last_buy_time:
+                    self.last_buy_time[symbol] = 0.0
 
             # Convertir entry_time string a datetime
             opened_at = datetime.now()
@@ -152,7 +161,7 @@ class TradingBot:
     def _load_trading_rules(self):
         """Descarga reglas de trading de Binance en tiempo de ejecución."""
         logger.info("Cargando filtros de precisión y reglas de trading desde Binance...")
-        for symbol in SYMBOLS:
+        for symbol in self.symbols:
             rules = self.api.get_symbol_rules(symbol)
             if rules:
                 self.trading_rules[symbol] = rules
@@ -285,7 +294,27 @@ class TradingBot:
             can_open_new = False
             logger.warning(f"🛑  Señal de pausa activa ({PAUSE_SIGNAL_FILE}). Solo se gestionan posiciones abiertas.")
 
-        for symbol in SYMBOLS:
+        # ── HOT-SWAP DYNAMIC CONFIG ──
+        try:
+            import json
+            dynamic_entry_raw = self.db.get_config_value("ENTRY_SYMBOLS")
+            if dynamic_entry_raw:
+                dynamic_entry = json.loads(dynamic_entry_raw)
+                if isinstance(dynamic_entry, list) and len(dynamic_entry) > 0:
+                    self.entry_symbols = dynamic_entry
+                    # Asegurar que las nuevas monedas estén en el universo general (symbols)
+                    for s in self.entry_symbols:
+                        if s not in self.symbols:
+                            self.symbols.append(s)
+                            if s not in self.trading_rules:
+                                rules = self.api.get_symbol_rules(s)
+                                self.trading_rules[s] = rules if rules else {"step_size": 0.01, "tick_size": 0.01, "min_notional": MIN_ORDER_NOTIONAL}
+                            if s not in self.last_buy_time:
+                                self.last_buy_time[s] = 0.0
+        except Exception as e:
+            logger.error(f"Error cargando config dinámica: {e}")
+
+        for symbol in self.symbols:
             try:
                 self._analyze(symbol, can_open_new=can_open_new)
             except Exception as e:
@@ -342,8 +371,8 @@ class TradingBot:
             return
 
         # Gestiona todos los símbolos, pero solo abre nuevas entradas en lista blanca.
-        if symbol not in ENTRY_SYMBOLS:
-            logger.info(f"{symbol} | Nuevas entradas deshabilitadas (ENTRY_SYMBOLS). Solo monitoreo.")
+        if symbol not in self.entry_symbols:
+            # logger.info(f"{symbol} | Nuevas entradas deshabilitadas (self.entry_symbols). Solo monitoreo.")
             return
 
         # ── Sin posición → verificar entrada ────────────────────────────────

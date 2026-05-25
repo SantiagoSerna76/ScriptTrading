@@ -1,5 +1,9 @@
-from flask import Flask, render_template, jsonify
+import threading
+import json
+from flask import Flask, render_template, jsonify, request
 from database import TradeDatabase
+from scanner import run_dynamic_scanner
+from notifier import TelegramNotifier
 
 app = Flask(__name__)
 db = TradeDatabase()
@@ -48,6 +52,40 @@ def api_history():
             "time": r[7]
         })
     return jsonify(history)
+
+@app.route('/api/config')
+def api_config():
+    entry_symbols_raw = db.get_config_value("ENTRY_SYMBOLS")
+    last_scan = db.get_config_value("LAST_SCAN_TIME", "Nunca")
+    
+    entry_symbols = []
+    if entry_symbols_raw:
+        try:
+            if isinstance(entry_symbols_raw, list):
+                entry_symbols = entry_symbols_raw
+            else:
+                parsed = json.loads(entry_symbols_raw)
+                if isinstance(parsed, list):
+                    entry_symbols = parsed
+        except Exception:
+            pass
+            
+    if not entry_symbols:
+        from config import ENTRY_SYMBOLS
+        entry_symbols = ENTRY_SYMBOLS
+
+    return jsonify({
+        "entry_symbols": entry_symbols,
+        "last_scan": last_scan
+    })
+
+@app.route('/api/scan', methods=['POST'])
+def api_scan():
+    # Lanzar escáner en background sin bloquear a Flask
+    notifier = TelegramNotifier()
+    thread = threading.Thread(target=run_dynamic_scanner, args=(db, notifier), daemon=True)
+    thread.start()
+    return jsonify({"status": "started", "message": "Escáner iniciado en background. Recibirás un mensaje por Telegram al finalizar."}), 202
 
 if __name__ == '__main__':
     app.run(debug=True, port=5000)

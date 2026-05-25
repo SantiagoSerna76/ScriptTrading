@@ -5,6 +5,48 @@ document.addEventListener('DOMContentLoaded', () => {
     const formatCurrency = (val) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(val);
     const formatPct = (val) => `${val >= 0 ? '+' : ''}${val.toFixed(2)}%`;
 
+    window.runScanner = async function() {
+        const btn = document.getElementById('btn-scan');
+        btn.disabled = true;
+        btn.innerHTML = '<span class="pulse" style="display:inline-block">🔄</span> Escaneando (30s)...';
+        try {
+            const res = await fetch('/api/scan', { method: 'POST' });
+            const data = await res.json();
+            console.log(data.message);
+        } catch(e) {
+            console.error('Error iniciando escáner:', e);
+            alert('Error iniciando escáner de altcoins.');
+        }
+        // Rehabilitar botón luego de un tiempo prudencial (el escaneo tarda aprox 15-30s)
+        setTimeout(() => {
+            btn.disabled = false;
+            btn.innerHTML = '🔄 Ejecutar Escáner';
+            fetchConfig(); // Forzar actualización visual
+        }, 15000);
+    }
+
+    async function fetchConfig() {
+        try {
+            const res = await fetch('/api/config');
+            const data = await res.json();
+            
+            document.getElementById('last-scan-time').textContent = data.last_scan;
+            
+            const badgesContainer = document.getElementById('symbols-badges');
+            let html = '';
+            if (data.entry_symbols && data.entry_symbols.length > 0) {
+                data.entry_symbols.forEach(sym => {
+                    html += `<span class="symbol-badge">${sym}</span>`;
+                });
+            } else {
+                html = '<span class="symbol-badge" style="border-color:var(--danger); color:var(--danger)">Ninguno</span>';
+            }
+            badgesContainer.innerHTML = html;
+        } catch(e) {
+            console.error('Error fetching config:', e);
+        }
+    }
+
     function initChart() {
         const ctx = document.getElementById('pnlChart').getContext('2d');
         Chart.defaults.color = '#94a3b8';
@@ -191,12 +233,14 @@ document.addEventListener('DOMContentLoaded', () => {
     initChart();
     
     // Initial fetch
+    fetchConfig();
     fetchStats();
     fetchOpenTrades();
     fetchHistory();
 
     // Poll every 5 seconds
     setInterval(() => {
+        fetchConfig();
         fetchStats();
         fetchOpenTrades();
         fetchHistory();

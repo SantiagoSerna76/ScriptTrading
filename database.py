@@ -81,6 +81,13 @@ class TradeDatabase:
             c.execute("CREATE INDEX IF NOT EXISTS idx_trades_exit    ON trades (exit_time)")
             c.execute("CREATE INDEX IF NOT EXISTS idx_indicators_sym ON indicators (symbol, timestamp)")
 
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS system_config (
+                    key   TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                )
+            """)
+
             conn.commit()
             logger.info(f"Base de datos lista y migrada: {self.db_file}")
         except Exception as e:
@@ -89,7 +96,43 @@ class TradeDatabase:
             conn.close()
 
     def _conn(self):
-        return sqlite3.connect(self.db_file)
+        conn = sqlite3.connect(self.db_file)
+        # Habilitar Write-Ahead Logging (WAL) para concurrencia (Flask/Bot)
+        conn.execute("PRAGMA journal_mode=WAL;")
+        return conn
+
+    # ── Configuración Dinámica (Hot-Swapping) ─────────────────────────────────
+    def set_config_value(self, key: str, value: str) -> None:
+        """Guarda un valor de configuración dinámica en la base de datos."""
+        conn = self._conn()
+        try:
+            c = conn.cursor()
+            c.execute("""
+                INSERT INTO system_config (key, value)
+                VALUES (?, ?)
+                ON CONFLICT(key) DO UPDATE SET value=excluded.value
+            """, (key, value))
+            conn.commit()
+        except Exception as e:
+            logger.error(f"Error guardando config '{key}': {e}")
+        finally:
+            conn.close()
+
+    def get_config_value(self, key: str, default_val: str = None) -> str:
+        """Obtiene un valor de configuración de la base de datos."""
+        conn = self._conn()
+        try:
+            c = conn.cursor()
+            c.execute("SELECT value FROM system_config WHERE key=?", (key,))
+            row = c.fetchone()
+            if row:
+                return row[0]
+            return default_val
+        except Exception as e:
+            logger.error(f"Error leyendo config '{key}': {e}")
+            return default_val
+        finally:
+            conn.close()
 
     # ── Escritura ─────────────────────────────────────────────────────────────
     def log_entry(self, symbol: str, entry_price: float, quantity: float,
