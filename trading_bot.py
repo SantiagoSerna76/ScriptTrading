@@ -524,9 +524,9 @@ class TradingBot:
         entry_price = df.iloc[-1]["close"]
         sl, tp, atr = self.strategy.calculate_sl_tp(entry_price, df)
 
-        # Rechazo por alta volatilidad: calculate_sl_tp retorna None si ATR > 3%
+        # Rechazo por alta volatilidad: calculate_sl_tp retorna None si ATR > 4%
         if sl is None:
-            logger.info(f"{symbol} | Trade RECHAZADO: volatilidad excesiva (SL > 3% del entry). Protegiendo R:R.")
+            logger.info(f"{symbol} | Trade RECHAZADO: volatilidad excesiva (SL > 4% del entry). Protegiendo R:R.")
             return
 
         # ── Objetivo de Take Profit estático ──────────────────────────────────
