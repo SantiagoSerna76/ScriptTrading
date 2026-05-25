@@ -347,6 +347,18 @@ class StrategySignals:
     def calculate_sl_tp(self, entry: float, df: pd.DataFrame):
         atr = df.iloc[-1]["atr"]
         sl = entry - SL_ATR_MULT * atr
+        
+        # PROTECCIÓN DE VOLATILIDAD: Si el SL natural (ATR) es > 3% del precio de entrada,
+        # la moneda está demasiado volátil. Retornamos None en sl para que el llamante rechace el trade.
+        # NO usamos un cap artificial (eso rompe el R:R). Mejor no entrar.
+        sl_distance_pct = (entry - sl) / entry * 100
+        if sl_distance_pct > 3.0:
+            logger.warning(
+                f"Volatilidad excesiva detectada: SL natural a -{sl_distance_pct:.1f}% del entry "
+                f"(ATR={atr:.4f}). Trade RECHAZADO para proteger el R:R."
+            )
+            return None, None, atr
+            
         tp_atr = entry + TP_ATR_MULT * atr
         fib_levels = self.calcular_niveles_fibonacci(df, FIBONACCI_PERIOD)
         tp_fib = fib_levels.get("fib_ext_1272", tp_atr) if fib_levels else tp_atr

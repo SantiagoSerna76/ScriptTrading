@@ -62,7 +62,7 @@ KLINES_LIMIT    = 500   # Datos suficientes para EMA200 + margen (estabilizació
 EMA_CORTO       = 20
 EMA_LARGO       = 50
 RSI_PERIOD      = 14
-RSI_MIN         = 53    # Optimizado cuantitativamente (53): capta momentum temprano con alta precision
+RSI_MIN         = 55    # Optimizado cuantitativamente (55): balance entre WR y PF
 RSI_MAX         = 72
 ATR_PERIOD      = 14
 ATR_MULTIPLIER  = 2.0
@@ -78,7 +78,7 @@ FIBONACCI_REQUIRE_IN_WEAK = True  # True = exige soporte Fibonacci para entrar e
 # ─── Stop Loss / Take Profit ─────────────────────────────────────────────────
 SL_ATR_MULT = 1.8   # Stop Loss = entry - (SL_ATR_MULT * ATR) [Optimizado de 2.0 a 1.8]
 TP_ATR_MULT = 2.3   # Take Profit = entry + (TP_ATR_MULT * ATR) [Optimizado de 2.5 a 2.3]
-PARTIAL_TP_PCT = 2.5  # % de ganancia para activar Venta Parcial [Optimizado de 2.0% a 2.5% para dejar correr ganadores]
+PARTIAL_TP_PCT = 1.5  # % de ganancia para activar Venta Parcial [Optimizado cuantitativamente a 1.5% para asegurar ganancias rapido]
 
 # ─── Comisiones y Retención ──────────────────────────────────────────────────
 TRADING_FEE_RATE = 0.001   # 0.1% por operación (Binance Spot estándar)

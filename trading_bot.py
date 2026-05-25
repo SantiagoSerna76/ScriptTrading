@@ -482,6 +482,11 @@ class TradingBot:
         entry_price = df.iloc[-1]["close"]
         sl, tp, atr = self.strategy.calculate_sl_tp(entry_price, df)
 
+        # Rechazo por alta volatilidad: calculate_sl_tp retorna None si ATR > 3%
+        if sl is None:
+            logger.info(f"{symbol} | Trade RECHAZADO: volatilidad excesiva (SL > 3% del entry). Protegiendo R:R.")
+            return
+
         # ── Objetivo de Take Profit estático ──────────────────────────────────
         # TP objetivo = entry + (TP_ATR_MULT × ATR). Sirve como objetivo de
         # venta parcial: al alcanzarlo se vende el 50% y el SL se sube a breakeven.
@@ -537,6 +542,11 @@ class TradingBot:
             sell_wall_threshold="MEDIUM"  # Rechaza muros MEDIUM y HIGH
         )
 
+        imbalance_sentiment = ob_details.get("imbalance", {}).get("sentiment", "NEUTRAL")
+        if imbalance_sentiment == "BEARISH":
+            logger.warning(f"⚠️  {symbol}: Imbalance BEARISH en el Order Book. Rechazando trade por fuerte presión vendedora.")
+            return
+
         if not ob_proceed:
             wall_detail = ob_details.get("sell_wall", {})
             if wall_detail.get("has_wall"):
@@ -585,7 +595,10 @@ class TradingBot:
             if total_qty > 0:
                 entry_price = sum(float(f["price"]) * float(f["qty"]) for f in fills) / total_qty
                 # Recalcular SL y TP con el precio real
-                sl, tp, atr = self.strategy.calculate_sl_tp(entry_price, df)
+                sl_new, tp_new, atr = self.strategy.calculate_sl_tp(entry_price, df)
+                # Solo actualizar si no es rechazado por volatilidad (caso raro post-fill)
+                if sl_new is not None:
+                    sl, tp = sl_new, tp_new
                 if not self.paper_trading:
                     logger.info(f"✨ Precio real de entrada (fills): ${entry_price:.4f}. SL y TP recalculados.")
 

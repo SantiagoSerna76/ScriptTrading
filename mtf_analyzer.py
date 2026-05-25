@@ -46,24 +46,23 @@ class MultiTimeframeAnalyzer:
             "ema_bullish": last["ema_short"] > last["ema_long"],
             "macd_bullish": last["macd"] > last["macd_signal"],  # ← Ahora es hard block
             "macd_growing": last["macd"] > prev["macd"],
-            "adx_strong": last["adx"] >= 25,  # Subido de 20→25: umbral real de tendencia
+            "adx_strong": last["adx"] >= 20,  # Bajado de 25→20: captura tendencias en desarrollo sin perder calidad
             "ema200": round(last["ema200"], 2),
             "adx": round(last["adx"], 2),
             "macd": round(last["macd"], 4),
         }
 
-        # Condiciones hard (deben cumplirse TODAS — MACD ahora incluido)
+        # Condiciones hard (deben cumplirse TODAS — MACD pasa a ser informativo/bonus)
         all_valid = all([
             conditions["price_above_ema200"],
             conditions["ema_bullish"],
             conditions["adx_strong"],
-            conditions["macd_bullish"],  # ← NUEVO: MACD 4H alcista obligatorio
         ])
 
         conditions["valid"] = all_valid
         if not all_valid:
             # Excluimos keys que no son booleanas ni el flag 'valid' en sí
-            skip_keys = {"ema200", "adx", "macd", "valid", "reason", "macd_growing"}
+            skip_keys = {"ema200", "adx", "macd", "valid", "reason", "macd_growing", "macd_bullish"}
             failed = [k for k, v in conditions.items() if k not in skip_keys and v is False]
             conditions["reason"] = f"Filtros fallidos en 4H: {', '.join(failed) if failed else 'condiciones no cumplidas'}"
         else:
@@ -141,6 +140,11 @@ class MultiTimeframeAnalyzer:
         if macro_conditions.get("adx", 0) > 30:
             combined_score += 1  # +1 por tendencia muy fuerte
             combined_details["filters_applied"]["strong_adx"] = f"ADX {macro_conditions.get('adx')}"
+
+        # Bonus si MACD es alcista
+        if macro_conditions.get("macd_bullish"):
+            combined_score += 1
+            combined_details["filters_applied"]["macd_bullish"] = True
 
         combined_details["combined_score"] = combined_score
         combined_details["macro_info"] = {

@@ -103,6 +103,11 @@ class Backtest:
 
                 if signal:
                     sl, tp, atr = self.strategy.calculate_sl_tp(price, window)
+                    
+                    # Rechazo por volatilidad excesiva (ATR > 3% del entry)
+                    if sl is None:
+                        continue
+                        
                     capital_per_trade = self.capital / MAX_OPEN_POSITIONS
                     
                     # Criterio de Kelly dinámico en backtesting

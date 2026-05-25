@@ -101,7 +101,7 @@ def precalculate_all_macro_conditions(cache: Dict):
                 "ema_bullish": row["ema_short"] > row["ema_long"],
                 "macd_bullish": row["macd"] > row["macd_signal"],
                 "macd_growing": row["macd"] > prev_row["macd"],
-                "adx_strong": row["adx"] >= 25,
+                "adx_strong": row["adx"] >= 20,
                 "ema200": round(row["ema200"], 2),
                 "adx": round(row["adx"], 2),
                 "macd": round(row["macd"], 4),
