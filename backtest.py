@@ -15,7 +15,7 @@ from config import (
     CAPITAL_TOTAL_USDT, RIESGO_POR_TRADE, TIMEFRAME,
     SL_ATR_MULT, TP_ATR_MULT, SYMBOLS, MAX_OPEN_POSITIONS,
     TRADING_FEE_RATE, MIN_HOLD_HOURS, PARTIAL_TP_PCT,
-    RELAXED_MACRO_SYMBOLS,
+    RELAXED_MACRO_SYMBOLS, PROXY_URL,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -35,7 +35,7 @@ class Backtest:
         self.risk     = RiskManager()
         self.mtf      = MultiTimeframeAnalyzer()
         self.trailing = TrailingStopManager()
-        self.api      = BinanceAPI("", "", use_testnet=False)
+        self.api      = BinanceAPI("", "", use_testnet=False, proxy_url=PROXY_URL)
         self.trades   = []
         self.total_fees = 0.0
 
