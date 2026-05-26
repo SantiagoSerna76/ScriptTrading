@@ -188,8 +188,14 @@ class MLSignalFilter:
             return np.array(feature_vector).reshape(1, -1)
         else:
             # If no feature names yet, return all features sorted alphabetically (for first-time training)
+            # BUG-17 FIX: Filter out string values that would crash sklearn
             sorted_items = sorted(features.items())
-            return np.array([v for k, v in sorted_items]).reshape(1, -1)
+            clean_values = []
+            for k, v in sorted_items:
+                if isinstance(v, str):
+                    v = 0.0
+                clean_values.append(float(v))
+            return np.array(clean_values).reshape(1, -1)
 
     def is_mock_model(self) -> bool:
         """

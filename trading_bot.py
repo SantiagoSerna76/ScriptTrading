@@ -155,17 +155,26 @@ class TradingBot:
                 except Exception:
                     pass
 
+            # BUG-RESTART FIX: Si ya hubo cierre parcial, el SL base DEBE ser
+            # al menos el precio de entrada (breakeven). Sin esto, tras un reinicio
+            # el trailing stop manager recalcula desde el SL original y puede
+            # generar un SL por debajo del entry — causando pérdidas como la de INJUSDT -4%.
+            base_sl = t["stop_loss"]
+            if t.get("partial_exit_done", False) and t["entry_price"] is not None:
+                base_sl = max(base_sl, t["entry_price"])
+                logger.info(f"🛡️  {symbol}: SL base elevado a breakeven (${base_sl:.4f}) por cierre parcial previo.")
+
             self.open_trades[symbol] = {
                 "trade_id":        t["id"],
                 "entry_price":     t["entry_price"],
                 "quantity":        t["entry_quantity"],
-                "stop_loss":       t["stop_loss"],
+                "stop_loss":       base_sl,
                 "take_profit":     t["take_profit"],
                 "tp_target":       self._resolve_tp_target(t.get("take_profit"), t.get("stop_loss")),
                 "risk_per_unit":   abs(t["entry_price"] - t["stop_loss"]),
                 "max_price":       t.get("max_price", t["entry_price"]),
                 "opened_at":       opened_at,
-                "trailing_sl":     t.get("trailing_sl", t["stop_loss"]),
+                "trailing_sl":     max(t.get("trailing_sl", base_sl), base_sl),
                 "partial_exit_done": t.get("partial_exit_done", False),
             }
             logger.info(
@@ -774,7 +783,9 @@ class TradingBot:
                 reason=f"TP Objetivo alcanzado (${tp_target:.4f})",
                 exit_quantity=trade["quantity"] * 0.5,
             ):
+                # BUG-INJ FIX: Elevar TANTO trailing_sl COMO stop_loss base a breakeven
                 trade["trailing_sl"] = trade["entry_price"]
+                trade["stop_loss"] = trade["entry_price"]  # <-- CRÍTICO: piso del trailing
                 self.db.update_trailing_sl(trade_id, trade["entry_price"], trade["max_price"])
                 logger.info(f"{symbol} | 🛡️  SL movido a Break-Even (${trade['entry_price']:.4f}) después de venta parcial en TP")
                 return
@@ -811,7 +822,12 @@ class TradingBot:
                     symbol, price, trade_id, trade,
                     partial["reason"], exit_quantity=partial["exit_quantity"],
                 ):
+                    # BUG-INJ FIX: Elevar TANTO el trailing_sl COMO el stop_loss base
+                    # al precio de entrada. Sin esto, el trailing stop manager
+                    # recalcula usando initial_sl (el SL original) y puede generar
+                    # un SL por debajo del entry en el siguiente ciclo.
                     trade["trailing_sl"] = entry
+                    trade["stop_loss"] = entry  # <-- CRÍTICO: piso del trailing
                     self.db.update_trailing_sl(trade_id, entry, trade["max_price"])
                     logger.info(f"{symbol} | 🛡️ Trailing Stop movido a Break-Even (${entry:.4f})")
                     return
@@ -847,7 +863,21 @@ class TradingBot:
 
         exit_quantity_rounded = self.round_qty(symbol, exit_quantity)
         if exit_quantity_rounded <= 0:
+            # BUG-08 FIX: Si la cantidad redondeada es 0, marcar como hecho
+            # para evitar un loop infinito de intentos fallidos de cierre parcial.
+            logger.warning(f"{symbol} | Cierre parcial: cantidad redondeada a 0. Marcando como completado para evitar loop.")
+            trade["partial_exit_done"] = True
+            self.open_trades[symbol]["partial_exit_done"] = True
             return
+
+        # BUG-QTY FIX: No vender más del 90% de la posición como "parcial".
+        # Si exit_quantity_rounded >= trade["quantity"], sería un cierre TOTAL disfrazado.
+        if exit_quantity_rounded >= trade["quantity"]:
+            exit_quantity_rounded = self.round_qty(symbol, trade["quantity"] * 0.5)
+            if exit_quantity_rounded <= 0:
+                trade["partial_exit_done"] = True
+                self.open_trades[symbol]["partial_exit_done"] = True
+                return
 
         pnl = (exit_price - entry) * exit_quantity_rounded
 
