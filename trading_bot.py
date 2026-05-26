@@ -120,6 +120,17 @@ class TradingBot:
         # Recuperar posiciones abiertas de la base de datos (evita huérfanas en reinicios)
         self._load_open_trades_from_db()
 
+    @staticmethod
+    def _resolve_tp_target(take_profit, stop_loss) -> float:
+        """Normaliza TP a float; evita TypeError si take_profit es NULL en BD."""
+        tp = take_profit if take_profit is not None else stop_loss
+        if tp is None:
+            return 0.0
+        try:
+            return float(tp)
+        except (TypeError, ValueError):
+            return 0.0
+
     def _load_open_trades_from_db(self):
         """Carga las posiciones abiertas guardadas en la base de datos para recuperar el estado tras un reinicio."""
         logger.info("Cargando posiciones abiertas desde la base de datos...")
@@ -150,7 +161,7 @@ class TradingBot:
                 "quantity":        t["entry_quantity"],
                 "stop_loss":       t["stop_loss"],
                 "take_profit":     t["take_profit"],
-                "tp_target":       t.get("take_profit", t["stop_loss"]),
+                "tp_target":       self._resolve_tp_target(t.get("take_profit"), t.get("stop_loss")),
                 "risk_per_unit":   abs(t["entry_price"] - t["stop_loss"]),
                 "max_price":       t.get("max_price", t["entry_price"]),
                 "opened_at":       opened_at,
@@ -662,7 +673,7 @@ class TradingBot:
             "quantity":        qty_rounded,
             "stop_loss":       sl,
             "take_profit":     tp,
-            "tp_target":       tp,
+            "tp_target":       self._resolve_tp_target(tp, sl),
             "risk_per_unit":   risk_per_unit,
             "max_price":       entry_price,
             "opened_at":       datetime.now(),
@@ -751,24 +762,22 @@ class TradingBot:
         # Si el precio llega al objetivo de TP se vende el 50% de la posición
         # y el SL se mueve al precio de entrada (sin pérdidas).
         # El resto de la posición continúa con trailing SL.
-        tp_target = trade.get("tp_target", 0.0)
+        tp_target = self._resolve_tp_target(trade.get("tp_target"), trade.get("take_profit"))
         if (
             tp_target > 0
             and not trade.get("partial_exit_done", False)
             and price >= tp_target
             and (datetime.now() - trade["opened_at"]).total_seconds() >= MIN_HOLD_HOURS * 3600
         ):
-            self._close_partial_trade(
-                symbol, price, trade_id,
+            if self._execute_partial_exit(
+                symbol, price, trade_id, trade,
                 reason=f"TP Objetivo alcanzado (${tp_target:.4f})",
                 exit_quantity=trade["quantity"] * 0.5,
-            )
-            trade["partial_exit_done"] = True
-            self.open_trades[symbol]["partial_exit_done"] = True
-            # Mover SL a breakeven sobre el resto de la posición
-            trade["trailing_sl"] = trade["entry_price"]
-            self.db.update_trailing_sl(trade_id, trade["entry_price"], trade["max_price"])
-            logger.info(f"{symbol} | 🛡️  SL movido a Break-Even (${trade['entry_price']:.4f}) después de venta parcial en TP")
+            ):
+                trade["trailing_sl"] = trade["entry_price"]
+                self.db.update_trailing_sl(trade_id, trade["entry_price"], trade["max_price"])
+                logger.info(f"{symbol} | 🛡️  SL movido a Break-Even (${trade['entry_price']:.4f}) después de venta parcial en TP")
+                return
 
         # 1. Trailing Stop Hit
         if price <= current_sl:
@@ -788,7 +797,7 @@ class TradingBot:
             if price < entry * 0.97:
                 exit_price, exit_reason = price, "RSI Crash (<25) + Drop >3%"
 
-        # 4. Cierre parcial opcional de ganancias
+        # 4. Cierre parcial opcional de ganancias (mutuamente excluyente con TP parcial)
         if exit_price is None and not trade.get("partial_exit_done"):
             partial = self.trailing.calculate_partial_exit(
                 entry_price=entry,
@@ -798,13 +807,14 @@ class TradingBot:
             )
             if partial.get("should_exit_partial"):
                 logger.info(f"{symbol} | 💰 Cierre parcial activado: {partial['reason']}")
-                self._close_partial_trade(symbol, price, trade_id, partial["reason"], exit_quantity=partial["exit_quantity"])
-                trade["partial_exit_done"] = True
-
-                # Forzar el trailing stop al break-even (precio de entrada)
-                trade["trailing_sl"] = entry
-                self.db.update_trailing_sl(trade_id, entry, trade["max_price"])
-                logger.info(f"{symbol} | 🛡️ Trailing Stop movido a Break-Even (${entry:.4f})")
+                if self._execute_partial_exit(
+                    symbol, price, trade_id, trade,
+                    partial["reason"], exit_quantity=partial["exit_quantity"],
+                ):
+                    trade["trailing_sl"] = entry
+                    self.db.update_trailing_sl(trade_id, entry, trade["max_price"])
+                    logger.info(f"{symbol} | 🛡️ Trailing Stop movido a Break-Even (${entry:.4f})")
+                    return
 
         if exit_price is None:
             return
@@ -814,9 +824,25 @@ class TradingBot:
     # ─────────────────────────────────────────────────────────────────────────
     # Cerrar posición (Parcial y Total)
     # ─────────────────────────────────────────────────────────────────────────
+    def _execute_partial_exit(self, symbol: str, exit_price: float, trade_id: int,
+                              trade: dict, reason: str, exit_quantity: float) -> bool:
+        """Ejecuta venta parcial con candado anti-doble-cierre. Retorna True si se vendió."""
+        if trade.get("partial_exit_done"):
+            return False
+        qty_before = trade["quantity"]
+        self._close_partial_trade(symbol, exit_price, trade_id, reason, exit_quantity)
+        if trade["quantity"] < qty_before:
+            trade["partial_exit_done"] = True
+            self.open_trades[symbol]["partial_exit_done"] = True
+            return True
+        return False
+
     def _close_partial_trade(self, symbol: str, exit_price: float,
                              trade_id: int, reason: str, exit_quantity: float):
         trade = self.open_trades[symbol]
+        if trade.get("partial_exit_done"):
+            logger.warning(f"{symbol} | Cierre parcial ignorado: ya se ejecutó una salida parcial.")
+            return
         entry = trade["entry_price"]
 
         exit_quantity_rounded = self.round_qty(symbol, exit_quantity)

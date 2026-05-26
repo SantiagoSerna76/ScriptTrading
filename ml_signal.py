@@ -164,8 +164,7 @@ class MLSignalFilter:
 
         # === Regime features ===
         if regime_info:
-            features['regime'] = regime_info.get('regime', 'UNKNOWN')
-            # One-hot encode regime (common regimes)
+            # One-hot encode regime (numeric only — bare 'regime' string breaks sklearn)
             regime_list = ['TREND_STRONG_BULL', 'TREND_BULL', 'TREND_WEAK', 'RANGE_VOLATILE', 'CHOPPY', 'NORMAL', 'UNKNOWN']
             for r in regime_list:
                 features[f'regime_{r}'] = 1 if regime_info.get('regime') == r else 0
@@ -182,7 +181,10 @@ class MLSignalFilter:
         if self.feature_names:
             feature_vector = []
             for fname in self.feature_names:
-                feature_vector.append(features.get(fname, 0.0))  # default 0 if missing
+                val = features.get(fname, 0.0)
+                if isinstance(val, str):
+                    val = 0.0
+                feature_vector.append(float(val))
             return np.array(feature_vector).reshape(1, -1)
         else:
             # If no feature names yet, return all features sorted alphabetically (for first-time training)

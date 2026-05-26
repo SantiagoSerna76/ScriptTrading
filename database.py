@@ -285,12 +285,19 @@ class TradeDatabase:
         if not conn: return False
         try:
             c = conn.cursor()
-            c.execute("SELECT symbol, side, entry_price, entry_quantity, entry_time, entry_reason, stop_loss, take_profit, max_price, trailing_sl FROM trades WHERE id=%s", (trade_id,))
+            c.execute("""
+                SELECT symbol, side, entry_price, entry_quantity, entry_time, entry_reason,
+                       stop_loss, take_profit, max_price, trailing_sl, partial_exit_done
+                FROM trades WHERE id=%s
+            """, (trade_id,))
             orig = c.fetchone()
             if not orig:
                 return False
 
-            symbol, side, entry_price, entry_qty, entry_time, entry_reason, sl, tp, max_p, tr_sl = orig
+            symbol, side, entry_price, entry_qty, entry_time, entry_reason, sl, tp, max_p, tr_sl, already_partial = orig
+            if already_partial:
+                logger.warning(f"Trade #{trade_id}: salida parcial duplicada ignorada (flag ya en BD).")
+                return False
 
             # 1. Update original trade to reduce its quantity and set flag
             new_qty = float(entry_qty) - float(exit_quantity)
