@@ -16,22 +16,31 @@ class MLSignalFilter:
     and provides a win probability given feature vector.
     """
 
-    def __init__(self, model_path: str = "ml_model.pkl", feature_names_path: str = "ml_feature_names.pkl"):
+    def __init__(self, model_path: str = "ml_model.pkl", feature_names_path: str = "ml_feature_names.pkl", scaler_path: str = "ml_scaler.pkl"):
         self.model_path = model_path
         self.feature_names_path = feature_names_path
+        self.scaler_path = scaler_path
         self.model = None
+        self.scaler = None
         self.feature_names = []
         self.is_ready = False
         self._load_model()
 
     def _load_model(self):
-        """Load pre-trained model and feature names from disk."""
+        """Load pre-trained model, scaler, and feature names from disk."""
         try:
             if os.path.exists(self.model_path) and os.path.exists(self.feature_names_path):
                 self.model = joblib.load(self.model_path)
                 self.feature_names = joblib.load(self.feature_names_path)
                 self.is_ready = True
                 logger.info(f"ML model loaded from {self.model_path} with {len(self.feature_names)} features.")
+
+                # Cargar scaler si existe (CRITICO: el modelo fue entrenado con datos normalizados)
+                if os.path.exists(self.scaler_path):
+                    self.scaler = joblib.load(self.scaler_path)
+                    logger.info(f"ML scaler loaded from {self.scaler_path}")
+                else:
+                    logger.warning(f"ML scaler not found at {self.scaler_path}. Predictions may be inaccurate if model was trained with scaling.")
             else:
                 logger.warning(f"ML model files not found: {self.model_path}, {self.feature_names_path}. "
                              f"ML filter will be disabled until model is trained.")
@@ -227,6 +236,13 @@ class MLSignalFilter:
             # Ensure 2D array
             if features.ndim == 1:
                 features = features.reshape(1, -1)
+
+            # CRITICO: Aplicar el scaler si existe. El modelo fue entrenado con
+            # datos normalizados (StandardScaler), asi que debemos normalizar
+            # las features antes de predecir. Sin esto, las predicciones son basura.
+            if self.scaler is not None:
+                features = self.scaler.transform(features)
+
             prob = self.model.predict_proba(features)[0, 1]  # probability of class 1
             return float(prob)
         except Exception as e:

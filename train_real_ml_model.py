@@ -56,6 +56,7 @@ MIN_TRADES      = 30
 MIN_WIN_RATE    = 0.45
 MIN_PF          = 1.0
 MIN_CLASS_COUNT = 5
+MIN_ROC_AUC     = 0.55   # No desplegar modelo con ROC-AUC < 0.55 (0.50 = azar puro)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -279,6 +280,19 @@ def main():
     # 4. Entrenar y evaluar
     logger.info("\nEntrenando modelos...")
     model, scaler, model_name, cv_score = train_and_evaluate(X, y, feature_names)
+
+    # 4b. Quality gate: no desplegar un modelo que predice peor que el azar
+    if cv_score < MIN_ROC_AUC:
+        logger.warning(f"ROC-AUC CV ({cv_score:.4f}) < umbral minimo ({MIN_ROC_AUC}). MODELO NO DESPLEGADO.")
+        logger.warning("El bot seguira operando sin filtro ML (pass-through) hasta tener mas datos.")
+        with open(BLOCKED_REPORT, "w") as f:
+            json.dump({
+                "quality": quality,
+                "issues": [f"ROC-AUC {cv_score:.4f} < {MIN_ROC_AUC} minimo"],
+                "model_name": model_name,
+                "cv_score": cv_score,
+            }, f, indent=2)
+        return False
 
     # 5. Deploy
     logger.info("\nDesplegando modelo...")
