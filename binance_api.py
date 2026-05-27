@@ -10,8 +10,8 @@ from config import API_KEY, SECRET_KEY
 logger = logging.getLogger(__name__)
 
 # ─── Constantes ──────────────────────────────────────────────────────────────
-MAX_RETRIES   = 3
-RETRY_DELAY_S = 2.0      # segundos entre reintentos (se duplica cada vez)
+MAX_RETRIES   = 4        # 4 reintentos para probar los 4 servidores de Binance
+RETRY_DELAY_S = 1.5      # un poco más rápido para saltar al siguiente server
 REQUEST_TIMEOUT = 12
 
 
@@ -23,6 +23,12 @@ class BinanceAPI:
         self.secret_key = secret_key
         self.use_testnet = use_testnet
         self.BASE_URL   = "https://testnet.binance.vision" if use_testnet else "https://api.binance.com"
+        self.BASE_URLS  = [
+            "https://api.binance.com",
+            "https://api1.binance.com",
+            "https://api2.binance.com",
+            "https://api3.binance.com"
+        ] if not use_testnet else ["https://testnet.binance.vision"]
         self.session    = requests.Session()
 
         # Configurar Proxy si existe (para evitar bloqueos IP en Render/nube)
@@ -79,11 +85,14 @@ class BinanceAPI:
         # Limpia None values antes de firmar
         params = {k: v for k, v in params.items() if v is not None}
 
-        url = f"{self.BASE_URL}{endpoint}"
         last_error = None
 
         for attempt in range(1, MAX_RETRIES + 1):
             try:
+                # Rotar URL en cada intento si hay bloqueos
+                current_base_url = self.BASE_URLS[(attempt - 1) % len(self.BASE_URLS)]
+                url = f"{current_base_url}{endpoint}"
+
                 p = dict(params)  # copia para no mutar en reintentos
 
                 if signed:
