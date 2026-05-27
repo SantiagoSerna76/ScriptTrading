@@ -21,12 +21,20 @@ logger = logging.getLogger(__name__)
 
 # Universo amplio de altcoins con buena liquidez en Binance Spot
 SCAN_SYMBOLS = [
+    # Top 30 originales
     "BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT",
     "DOGEUSDT", "ADAUSDT", "AVAXUSDT", "DOTUSDT", "LINKUSDT",
     "MATICUSDT", "SHIBUSDT", "LTCUSDT", "UNIUSDT", "ATOMUSDT",
     "NEARUSDT", "APTUSDT", "ARBUSDT", "OPUSDT", "SUIUSDT",
     "FILUSDT", "AAVEUSDT", "INJUSDT", "RENDERUSDT", "FETUSDT",
     "PEPEUSDT", "WIFUSDT", "FLOKIUSDT", "TRXUSDT", "ICPUSDT",
+    # 30 Nuevas adiciones para expandir la red
+    "BCHUSDT", "ETCUSDT", "STXUSDT", "IMXUSDT", "VETUSDT",
+    "THETAUSDT", "FTMUSDT", "ALGOUSDT", "SANDUSDT", "MANAUSDT",
+    "GALAUSDT", "EGLDUSDT", "AXSUSDT", "KASUSDT", "TONUSDT",
+    "SEIUSDT", "TIAUSDT", "TAOUSDT", "ORDIUSDT", "RUNEUSDT",
+    "ASTRUSDT", "AGIXUSDT", "OCEANUSDT", "ROSEUSDT", "CHZUSDT",
+    "QNTUSDT", "MKRUSDT", "SNXUSDT", "CRVUSDT", "LDOUSDT"
 ]
 
 
