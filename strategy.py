@@ -81,8 +81,8 @@ class StrategySignals:
     Señales basadas en puntuación + filtro macro EMA200.
     """
 
-    MIN_BUY_SCORE  = 8  # Subido de 7→8: menos entradas pero todas de alta calidad (PF > 2.0)
-    MIN_SELL_SCORE = 4  # Subido de 3→4: exige señales más fuertes para cerrar
+    MIN_BUY_SCORE  = 6  # Bajado a 6 para permitir mayor frecuencia de trades (3-6 al día)
+    MIN_SELL_SCORE = 3  # Bajado a 3 para cierres oportunos
 
     def __init__(self):
         self.ti = TechnicalIndicators()
@@ -134,24 +134,24 @@ class StrategySignals:
         # Clasificación de régimen
         if adx_val >= 25 and close > ema200 and ema20 > ema50:
             regime = "TREND_STRONG_BULL"
-            min_score = 7  # Excelente tendencia, permitimos entradas más fluidas
+            min_score = 6  # Excelente tendencia, entradas muy fluidas
             reason = f"Tendencia alcista fuerte (ADX={adx_val:.1f})"
         elif adx_val >= 20 and (close > ema200 or ema20 > ema50):
             regime = "TREND_WEAK"
-            min_score = 8  # Tendencia en desarrollo o débil, exigir más confirmación
+            min_score = 7  # Tendencia en desarrollo, buena frecuencia
             reason = f"Tendencia alcista moderada/débil (ADX={adx_val:.1f})"
         elif adx_val < 20:
             if volume > volume_sma and atr > atr_sma:
                 regime = "RANGE_VOLATILE"
-                min_score = 8  # Rango volátil, exige buena puntuación
+                min_score = 7  # Rango volátil
                 reason = "Mercado en rango con volatilidad alta"
             else:
                 regime = "CHOPPY"
-                min_score = 9  # Lateral picado y aburrido, solo entrar con señales perfectas (9/10)
+                min_score = 8  # Lateral picado, exige buena señal pero no imposible
                 reason = "Mercado lateral / consolidación de bajo volumen (Chop)"
         else:
             regime = "NORMAL"
-            min_score = 8
+            min_score = 7
             reason = "Condiciones normales de mercado"
             
         return {

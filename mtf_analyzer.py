@@ -102,11 +102,11 @@ class MultiTimeframeAnalyzer:
         # GATE 1: La tendencia macro NO es alcista → RECHAZA o PENALIZA
         if not macro_conditions.get("valid", False):
             if relaxed:
-                # No rechaza, pero aplica penalización de -2 al score combinado
-                macro_relaxed_penalty = 2
+                # No rechaza, la marca como Elite y no penaliza
+                macro_relaxed_penalty = 0
                 combined_details["reason"] = (
                     f"Macro 4H NO es alcista ({macro_conditions.get('reason', 'Unknown')}) "
-                    f"— RELAJADO: entrada permitida con score -2"
+                    f"— RELAJADO: entrada permitida sin penalización"
                 )
                 combined_details["filters_applied"]["macro_relaxed"] = True
                 # Continúa al GATE 2 en lugar de rechazar
