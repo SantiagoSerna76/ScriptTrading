@@ -96,36 +96,15 @@ class MultiTimeframeAnalyzer:
             "relaxed": relaxed,
         }
 
-        # Bandera de penalización por macro inválida en modo relajado
-        macro_relaxed_penalty = 0
-
-        # GATE 1: La tendencia macro NO es alcista → RECHAZA o PENALIZA
+        # GATE 1: La tendencia macro ya no bloquea a nadie. Solo da contexto y suma bonos después.
         if not macro_conditions.get("valid", False):
-            if relaxed:
-                # No rechaza, la marca como Elite y no penaliza
-                macro_relaxed_penalty = 0
-                combined_details["reason"] = (
-                    f"Macro 4H NO es alcista ({macro_conditions.get('reason', 'Unknown')}) "
-                    f"— RELAJADO: entrada permitida sin penalización"
-                )
-                combined_details["filters_applied"]["macro_relaxed"] = True
-                # Continúa al GATE 2 en lugar de rechazar
-            else:
-                combined_details["combined_score"] = -999
-                combined_details["reason"] = (
-                    f"Macro 4H NO es alcista ({macro_conditions.get('reason', 'Unknown')})"
-                )
-                return False, combined_details
+            combined_details["reason"] = f"Macro 4H NO alcista ({macro_conditions.get('reason', 'Unknown')})"
+        else:
+            combined_details["reason"] = "Macro 4H Alcista confirmada"
 
-        # GATE 2: Señal táctica no se cumple
-        if not buy_signal_1h:
-            combined_details["combined_score"] = conditions_1h.get("score", 0) - macro_relaxed_penalty
-            combined_details["reason"] = f"Señal 1H insuficiente (score {conditions_1h.get('score', 0)})"
-            return False, combined_details
-
-        # GATE 3: Si ambas se cumplen, CONFIRMA con bonus macro
-        # Aplicar penalización de macro relajada si corresponde
-        combined_score = conditions_1h.get("score", 0) - macro_relaxed_penalty
+        # Obtenemos el score táctico base de 1H
+        base_score = conditions_1h.get("score", 0)
+        combined_score = base_score
 
         # Bonus si EMA200 muy por debajo del precio (uptrend fuerte)
         if macro_conditions.get("price_above_ema200"):
@@ -152,12 +131,18 @@ class MultiTimeframeAnalyzer:
             "adx": macro_conditions.get("adx"),
             "macd": macro_conditions.get("macd"),
         }
+        # Determinar score mínimo necesario basado en si es Elite (relaxed) o Francotirador (non-elite)
+        effective_min_score = conditions_1h.get("min_score", 6) if relaxed else max(8, conditions_1h.get("min_score", 8))
+        
+        is_valid = combined_score >= effective_min_score
+
         combined_details["reason"] = (
-            f"MTF VÁLIDO: Macro 4H alcista + Señal 1H score {conditions_1h.get('score')} "
-            f"→ Combined score {combined_score}"
+            f"MTF {'VÁLIDO' if is_valid else 'INVÁLIDO'}: "
+            f"Macro {'Alcista' if macro_conditions.get('valid') else 'No Alcista'} + "
+            f"Score {combined_score} (Req: {effective_min_score})"
         )
 
-        return combined_score >= 6, combined_details
+        return is_valid, combined_details
 
 
 class HigherTimeframeFilter:
