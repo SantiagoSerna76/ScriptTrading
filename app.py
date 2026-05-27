@@ -56,26 +56,25 @@ def api_history():
 @app.route('/api/config')
 def api_config():
     entry_symbols_raw = db.get_config_value("ENTRY_SYMBOLS")
+    elite_symbols_raw = db.get_config_value("RELAXED_MACRO_SYMBOLS")
     last_scan = db.get_config_value("LAST_SCAN_TIME", "Nunca")
     
-    entry_symbols = []
-    if entry_symbols_raw:
+    def parse_syms(raw_val, default_list):
+        if not raw_val: return default_list
         try:
-            if isinstance(entry_symbols_raw, list):
-                entry_symbols = entry_symbols_raw
-            else:
-                parsed = json.loads(entry_symbols_raw)
-                if isinstance(parsed, list):
-                    entry_symbols = parsed
-        except Exception:
-            pass
-            
-    if not entry_symbols:
-        from config import ENTRY_SYMBOLS
-        entry_symbols = ENTRY_SYMBOLS
+            if isinstance(raw_val, list): return raw_val
+            parsed = json.loads(raw_val)
+            if isinstance(parsed, list): return parsed
+        except: pass
+        return default_list
+
+    from config import ENTRY_SYMBOLS, RELAXED_MACRO_SYMBOLS
+    entry_symbols = parse_syms(entry_symbols_raw, ENTRY_SYMBOLS)
+    elite_symbols = parse_syms(elite_symbols_raw, RELAXED_MACRO_SYMBOLS)
 
     return jsonify({
         "entry_symbols": entry_symbols,
+        "elite_symbols": elite_symbols,
         "last_scan": last_scan
     })
 

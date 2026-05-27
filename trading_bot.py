@@ -74,6 +74,7 @@ class TradingBot:
         # Símbolos Activos y Hot-Swap
         self.symbols = SYMBOLS.copy()
         self.entry_symbols = ENTRY_SYMBOLS.copy()
+        self.relaxed_symbols = RELAXED_MACRO_SYMBOLS.copy()
 
         # Garantizar que todos los ENTRY_SYMBOLS sean monitoreados y analizados
         for s in self.entry_symbols:
@@ -323,10 +324,17 @@ class TradingBot:
         try:
             import json
             dynamic_entry_raw = self.db.get_config_value("ENTRY_SYMBOLS")
+            dynamic_elite_raw = self.db.get_config_value("RELAXED_MACRO_SYMBOLS")
+            
             if dynamic_entry_raw:
                 dynamic_entry = json.loads(dynamic_entry_raw)
                 if isinstance(dynamic_entry, list) and len(dynamic_entry) > 0:
                     self.entry_symbols = dynamic_entry
+                    
+            if dynamic_elite_raw:
+                dynamic_elite = json.loads(dynamic_elite_raw)
+                if isinstance(dynamic_elite, list) and len(dynamic_elite) > 0:
+                    self.relaxed_symbols = dynamic_elite
                     # Asegurar que las nuevas monedas estén en el universo general (symbols)
                     for s in self.entry_symbols:
                         if s not in self.symbols:
@@ -446,7 +454,7 @@ class TradingBot:
         if buy_signal_1h or conds_1h.get('score', 0) >= 6:
             if "No hay suficientes datos 4H" not in macro_conds.get('reason', ''):
                 # Validación MTF completa con datos de 4H
-                relaxed = symbol in RELAXED_MACRO_SYMBOLS
+                relaxed = symbol in self.relaxed_symbols
                 buy_signal_mtf, mtf_details = self.mtf.validate_entry_with_macro(
                     df_1h, macro_conds, buy_signal_1h, conds_1h,
                     relaxed=relaxed

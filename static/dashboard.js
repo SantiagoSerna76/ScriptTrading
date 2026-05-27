@@ -32,16 +32,33 @@ document.addEventListener('DOMContentLoaded', () => {
             
             document.getElementById('last-scan-time').textContent = data.last_scan;
             
-            const badgesContainer = document.getElementById('symbols-badges');
-            let html = '';
-            if (data.entry_symbols && data.entry_symbols.length > 0) {
-                data.entry_symbols.forEach(sym => {
-                    html += `<span class="symbol-badge">${sym}</span>`;
+            const eliteContainer = document.getElementById('elite-badges');
+            const sniperContainer = document.getElementById('sniper-badges');
+            
+            let htmlElite = '';
+            if (data.elite_symbols && data.elite_symbols.length > 0) {
+                data.elite_symbols.forEach(sym => {
+                    htmlElite += `<span class="symbol-badge" style="background: rgba(16, 185, 129, 0.1); color: #10b981; border-color: rgba(16, 185, 129, 0.3);">${sym}</span>`;
                 });
             } else {
-                html = '<span class="symbol-badge" style="border-color:var(--danger); color:var(--danger)">Ninguno</span>';
+                htmlElite = '<span class="symbol-badge" style="border-color:var(--danger); color:var(--danger)">Ninguno</span>';
             }
-            badgesContainer.innerHTML = html;
+            eliteContainer.innerHTML = htmlElite;
+
+            let htmlSniper = '';
+            if (data.entry_symbols && data.entry_symbols.length > 0) {
+                data.entry_symbols.forEach(sym => {
+                    if (!data.elite_symbols || !data.elite_symbols.includes(sym)) {
+                        htmlSniper += `<span class="symbol-badge">${sym}</span>`;
+                    }
+                });
+                if (htmlSniper === '') {
+                    htmlSniper = '<span class="symbol-badge" style="border-color:var(--text-muted); color:var(--text-muted)">Solo monedas élite</span>';
+                }
+            } else {
+                htmlSniper = '<span class="symbol-badge" style="border-color:var(--danger); color:var(--danger)">Ninguno</span>';
+            }
+            sniperContainer.innerHTML = htmlSniper;
         } catch(e) {
             console.error('Error fetching config:', e);
         }

@@ -85,24 +85,25 @@ def run_dynamic_scanner(db, notifier=None):
     results.sort(key=lambda x: x["pnl"], reverse=True)
     
     # Filtro estricto + Walk-Forward Validation (mínimo 10 trades para validez estadística)
-    profitable = [r for r in results if r["pnl"] > 0 and r["pf"] >= 1.5 and r["wr"] >= 55 and r["trades"] >= 10 and r.get("wf_valid", False)]
+    sniper_pool = [r for r in results if r["pnl"] > 0 and r["pf"] >= 1.3 and r["wr"] >= 50 and r["trades"] >= 5]
+    elite_pool = [r for r in results if r["pnl"] > 0 and r["pf"] >= 2.0 and r["wr"] >= 65 and r["trades"] >= 10 and r.get("wf_valid", False)]
     
-    if profitable:
-        syms = [r["symbol"] for r in profitable]
-        total_pnl = sum(r["pnl"] for r in profitable)
+    if sniper_pool:
+        sniper_syms = [r["symbol"] for r in sniper_pool]
+        elite_syms = [r["symbol"] for r in elite_pool]
+        total_pnl = sum(r["pnl"] for r in sniper_pool)
         
         # Guardar dinámicamente en SQLite (Hot-Swap)
-        db.set_config_value("ENTRY_SYMBOLS", json.dumps(syms))
+        db.set_config_value("ENTRY_SYMBOLS", json.dumps(sniper_syms))
+        db.set_config_value("RELAXED_MACRO_SYMBOLS", json.dumps(elite_syms))
         db.set_config_value("LAST_SCAN_TIME", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
         
         if notifier:
-            msg = f"✅ *Escaneo completado.*\n\n🔄 *Hot-Swap Activo* ({len(syms)} monedas):\n"
-            for r in profitable:
-                msg += f"• `{r['symbol']}` (PF: {r['pf']:.2f}, WR: {r['wr']:.0f}%)\n"
+            msg = f"✅ *Escaneo completado.*\n\n🔄 *Hot-Swap Activo* ({len(sniper_syms)} total, {len(elite_syms)} élite):\n"
             msg += f"\n_P&L Estimado_: `${total_pnl:+.2f}`"
             notifier.send_message(msg)
             
-        logger.info(f"Hot-Swap completado. ENTRY_SYMBOLS actualizados a: {syms}")
+        logger.info(f"Hot-Swap completado. ENTRY_SYMBOLS: {sniper_syms} | RELAXED_MACRO_SYMBOLS: {elite_syms}")
     else:
         logger.warning("Ningún activo pasó el filtro en el escaneo dinámico.")
         if notifier:
