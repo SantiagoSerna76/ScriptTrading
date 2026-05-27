@@ -132,7 +132,7 @@ class MultiTimeframeAnalyzer:
             "macd": macro_conditions.get("macd"),
         }
         # Determinar score mínimo necesario basado en si es Elite (relaxed) o Francotirador (non-elite)
-        effective_min_score = conditions_1h.get("min_score", 6) if relaxed else max(8, conditions_1h.get("min_score", 8))
+        effective_min_score = 6 if relaxed else max(8, conditions_1h.get("min_score", 8))
         
         is_valid = combined_score >= effective_min_score
 
