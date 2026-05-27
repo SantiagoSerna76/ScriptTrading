@@ -114,14 +114,19 @@ class Backtest:
                     stats = self._get_simulated_stats()
                     risk_pct = self.risk.calculate_kelly_risk(stats, RIESGO_POR_TRADE)
                     
-                    qty = self.risk.position_size(capital_per_trade, price, sl, risk_pct)
+                    # NUEVO: Sizing sobre capital total dinámico, TRENDING usa 100% del slot
+                    qty_risk = self.risk.position_size(self.capital, price, sl, risk_pct)
                     
-                    # Ajuste por régimen (V4)
                     regime = conds.get("regime", "NORMAL")
                     size_multiplier = self.strategy.get_position_size_multiplier(regime)
-                    qty = qty * size_multiplier
                     
-                    qty = min(qty, capital_per_trade / price)
+                    max_qty_by_cap = (capital_per_trade * size_multiplier) / price
+                    
+                    if size_multiplier < 1.0:
+                        qty = min(qty_risk, max_qty_by_cap)
+                    else:
+                        qty = max_qty_by_cap  # TRENDING usa el 100%
+                        
                     notional = qty * price
                     if qty > 0 and notional >= 5:
                         # Descontar comisión de compra
