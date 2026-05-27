@@ -38,7 +38,7 @@ STRATEGY_START_TIME = "2026-05-24T00:58:00"
 # ─── Capital y Riesgo ────────────────────────────────────────────────────────
 CAPITAL_TOTAL_USDT   = 500.0   # Capital total que el bot puede usar
 RIESGO_POR_TRADE     = 0.02    # 2% del capital por trade (base — Kelly lo ajusta dinámicamente)
-MAX_OPEN_POSITIONS   = 2      # Bajado a 2 ($250 por posición) para concentrar el capital
+MAX_OPEN_POSITIONS   = 3      # Máximo de posiciones simultáneas ($167 por posición con 5 símbolos)
 MIN_ORDER_NOTIONAL   = 5.0     # Mínimo real de Binance para estos altcoins (verificado por get_symbol_rules)
 
 # ─── Ajuste por Régimen de Mercado ───────────────────────────────────────────
