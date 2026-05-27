@@ -196,7 +196,7 @@ class StrategySignals:
             "fib_500": maximo - (distancia * 0.500),
             "fib_618": maximo - (distancia * 0.618),
             "fib_786": maximo - (distancia * 0.786),
-            "fib_ext_1272": maximo + (distancia * 0.272),
+            "fib_ext_1272": maximo + (distancia * (FIBONACCI_EXT_TP - 1)),
             "fib_ext_1618": maximo + (distancia * 0.618),
         }
 
@@ -315,7 +315,7 @@ class StrategySignals:
             close = last["close"]
             fib_382 = fib_levels["fib_382"]
             fib_500 = fib_levels["fib_500"]
-            fib_mid_zone = fib_382 <= close <= fib_500
+            fib_mid_zone = fib_500 <= close <= fib_382
             details["fib_mid_zone"] = fib_mid_zone
             if fib_mid_zone:
                 score += 1
