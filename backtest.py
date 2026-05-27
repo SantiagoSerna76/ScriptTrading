@@ -104,7 +104,7 @@ class Backtest:
                 if signal:
                     sl, tp, atr = self.strategy.calculate_sl_tp(price, window)
                     
-                    # Rechazo por volatilidad excesiva (ATR > 4% del entry)
+                    # Rechazo por volatilidad excesiva (ATR > 6% del entry)
                     if sl is None:
                         continue
                         

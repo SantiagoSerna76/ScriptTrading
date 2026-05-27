@@ -554,7 +554,7 @@ class TradingBot:
 
         # Rechazo por alta volatilidad: calculate_sl_tp retorna None si ATR > 4%
         if sl is None:
-            logger.info(f"{symbol} | Trade RECHAZADO: volatilidad excesiva (SL > 4% del entry). Protegiendo R:R.")
+            logger.info(f"{symbol} | Trade RECHAZADO: volatilidad excesiva (SL > 6% del entry). Protegiendo R:R.")
             return
 
         # ── Objetivo de Take Profit estático ──────────────────────────────────
