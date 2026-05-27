@@ -570,11 +570,12 @@ class TradingBot:
         # 2. Aplicación de multiplicador de régimen (Ajuste estratégico)
         regime = conds.get('regime', 'NORMAL')
         size_multiplier = self.strategy.get_position_size_multiplier(regime)
-        qty_adjusted = qty_risk_based * size_multiplier
 
-        # 3. Limitar por capital total disponible (Safety Cap)
-        max_qty_by_cap = self.capital_per_trade / entry_price
-        qty = min(qty_adjusted, max_qty_by_cap)
+        # 3. Calcular posición final
+        # En TRENDING (mult=1.0): usar 100% del slot (capital_per_trade), sin limitación por fórmula de riesgo.
+        # En otros regímenes: el multiplicador reduce el slot disponible.
+        max_qty_by_cap = (self.capital_per_trade * size_multiplier) / entry_price
+        qty = min(qty_risk_based, max_qty_by_cap) if size_multiplier < 1.0 else max_qty_by_cap
 
         # 4. Redondeo y redondeo final de la cantidad
         qty_rounded = self.round_qty(symbol, qty)
