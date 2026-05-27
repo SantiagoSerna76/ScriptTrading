@@ -85,7 +85,7 @@ FIBONACCI_REQUIRE_IN_WEAK = True  # True = exige soporte Fibonacci para entrar e
 # ─── Stop Loss / Take Profit ─────────────────────────────────────────────────
 SL_ATR_MULT = 1.8   # Stop Loss = entry - (SL_ATR_MULT * ATR) [Optimizado de 2.0 a 1.8]
 TP_ATR_MULT = 2.3   # Take Profit = entry + (TP_ATR_MULT * ATR) [Optimizado de 2.5 a 2.3]
-PARTIAL_TP_PCT = 2.5  # % de ganancia para activar Venta Parcial [Optimizado cuantitativamente a 2.5% para asegurar ganancias rapido]
+PARTIAL_TP_PCT = 1.8  # % de ganancia para activar Venta Parcial [Punto medio conservador/rentable]
 
 # ─── Comisiones y Retención ──────────────────────────────────────────────────
 TRADING_FEE_RATE = 0.001   # 0.1% por operación (Binance Spot estándar)
