@@ -84,9 +84,9 @@ def run_dynamic_scanner(db, notifier=None):
     
     results.sort(key=lambda x: x["pnl"], reverse=True)
     
-    # Filtro estricto + Walk-Forward Validation (mínimo 10 trades para validez estadística)
-    sniper_pool = [r for r in results if r["pnl"] > 0 and r["pf"] >= 1.3 and r["wr"] >= 50 and r["trades"] >= 5]
-    elite_pool = [r for r in results if r["pnl"] > 0 and r["pf"] >= 2.0 and r["wr"] >= 65 and r["trades"] >= 10 and r.get("wf_valid", False)]
+    # Filtro suavizado para capturar más volumen de datos sin perder calidad base
+    sniper_pool = [r for r in results if r["pnl"] > 0 and r["pf"] >= 1.15 and r["wr"] >= 45 and r["trades"] >= 3]
+    elite_pool = [r for r in results if r["pnl"] > 0 and r["pf"] >= 1.5 and r["wr"] >= 55 and r["trades"] >= 5 and r.get("wf_valid", False)]
     
     if sniper_pool:
         sniper_syms = [r["symbol"] for r in sniper_pool]
@@ -149,9 +149,9 @@ def main():
 
     # Recomendar configuración
     # Sniper: rentables básicos
-    sniper_pool = [r for r in results if r["pnl"] > 0 and r["pf"] >= 1.3 and r["wr"] >= 50 and r["trades"] >= 5]
+    sniper_pool = [r for r in results if r["pnl"] > 0 and r["pf"] >= 1.15 and r["wr"] >= 45 and r["trades"] >= 3]
     # Elites: lo mejor de lo mejor
-    elite_pool = [r for r in results if r["pnl"] > 0 and r["pf"] >= 2.0 and r["wr"] >= 65 and r["trades"] >= 10 and r.get("wf_valid", False)]
+    elite_pool = [r for r in results if r["pnl"] > 0 and r["pf"] >= 1.5 and r["wr"] >= 55 and r["trades"] >= 5 and r.get("wf_valid", False)]
     
     print(f"\n{'=' * 80}")
     if sniper_pool:
