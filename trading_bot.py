@@ -559,9 +559,10 @@ class TradingBot:
         stats = self.db.get_symbol_trades_stats(symbol)
         risk_pct = self.risk.calculate_kelly_risk(stats, RIESGO_POR_TRADE)
 
-        # Calcular cantidad ideal basado en el riesgo por unidad y el capital asignado
+        # Calcular cantidad ideal basado en el riesgo sobre el CAPITAL TOTAL,
+        # NO solo la fracción por slot, para que el 2% de riesgo sea real ($10 de $500).
         qty_risk_based = self.risk.position_size(
-            self.capital_per_trade, entry_price, sl, risk_pct
+            CAPITAL_TOTAL_USDT, entry_price, sl, risk_pct
         )
 
         # 2. Aplicación de multiplicador de régimen (Ajuste estratégico)
