@@ -147,17 +147,63 @@ def main():
         print(f"  {emoji} {r['symbol']:<10} {r['trades']:>5} {wl:>7} {r['wr']:>4.0f}% ${r['pnl']:>+7.2f} {r['roi']:>+6.2f}% {r['pf']:>5.2f} {r['avg_dur']:>6.1f} ${r['fees']:>5.2f}")
 
     # Recomendar configuración
-    profitable = [r for r in results if r["pnl"] > 0 and r["pf"] >= 1.5 and r["wr"] >= 55 and r["trades"] >= 10 and r.get("wf_valid", False)]
+    # Sniper: rentables básicos
+    sniper_pool = [r for r in results if r["pnl"] > 0 and r["pf"] >= 1.3 and r["wr"] >= 50 and r["trades"] >= 5]
+    # Elites: lo mejor de lo mejor
+    elite_pool = [r for r in results if r["pnl"] > 0 and r["pf"] >= 2.0 and r["wr"] >= 65 and r["trades"] >= 10 and r.get("wf_valid", False)]
+    
     print(f"\n{'=' * 80}")
-    if profitable:
-        syms = [r["symbol"] for r in profitable]
-        total_pnl = sum(r["pnl"] for r in profitable)
-        print(f"  ✅ RECOMENDACIÓN: permitir NUEVAS entradas en estos {len(profitable)} activos:")
-        for r in profitable:
-            print(f"     • {r['symbol']:12} → P&L ${r['pnl']:+.2f} | PF {r['pf']:.2f} | {r['trades']} trades")
-        print(f"\n  P&L combinado estimado: ${total_pnl:+.2f} en 60 días")
-        print(f"\n  Configuración sugerida para config.py:")
-        print(f'  ENTRY_SYMBOLS = {syms}')
+    if sniper_pool:
+        sniper_syms = [r["symbol"] for r in sniper_pool]
+        elite_syms = [r["symbol"] for r in elite_pool]
+        
+        print(f"  ✅ MODO ÉLITE (Relajado): {len(elite_syms)} activos:")
+        for r in elite_pool:
+            print(f"     • {r['symbol']:12} → P&L ${r['pnl']:+.2f} | PF {r['pf']:.2f} | WR {r['wr']:.0f}%")
+            
+        print(f"\n  🎯 MODO FRANCOTIRADOR (Estricto): {len(sniper_syms)} activos en total (incluyendo élites):")
+        for r in sniper_pool:
+            if r["symbol"] not in elite_syms:
+                print(f"     • {r['symbol']:12} → P&L ${r['pnl']:+.2f} | PF {r['pf']:.2f} | WR {r['wr']:.0f}%")
+        
+        print(f"\n  Actualizando config.py automáticamente...")
+        
+        import re
+        config_path = "config.py"
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                content = f.read()
+                
+            # Replace ENTRY_SYMBOLS
+            content = re.sub(
+                r"ENTRY_SYMBOLS\s*=\s*\[.*?\]",
+                f"ENTRY_SYMBOLS = {sniper_syms}",
+                content,
+                flags=re.DOTALL
+            )
+            
+            # Replace RELAXED_MACRO_SYMBOLS
+            content = re.sub(
+                r"RELAXED_MACRO_SYMBOLS\s*=\s*\[.*?\]",
+                f"RELAXED_MACRO_SYMBOLS = {elite_syms}",
+                content,
+                flags=re.DOTALL
+            )
+            
+            # Replace SYMBOLS (we'll keep it same as ENTRY_SYMBOLS for simplicity)
+            content = re.sub(
+                r"SYMBOLS\s*=\s*\[.*?\]",
+                f"SYMBOLS = {sniper_syms}",
+                content,
+                flags=re.DOTALL
+            )
+            
+            with open(config_path, "w", encoding="utf-8") as f:
+                f.write(content)
+            print("  ✅ config.py actualizado exitosamente con la nueva configuración de dos niveles.")
+        except Exception as e:
+            print(f"  ❌ Error actualizando config.py: {e}")
+            
     else:
         print("  ⚠️  Ningún activo supera los filtros de rentabilidad mínima.")
     print(f"{'=' * 80}\n")

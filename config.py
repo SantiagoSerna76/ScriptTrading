@@ -18,17 +18,17 @@ USE_TESTNET   = False   # False = usa Mainnet para datos reales de mercado
 # ─── Universo de Trading ─────────────────────────────────────────────────────
 # Seleccionados por scanner (30 pares, 60 días): solo símbolos con PF > 1.0 y P&L positivo
 # Universo monitoreado. NEAR se conserva para gestionar una posición abierta existente.
-SYMBOLS = ['INJUSDT', 'ICPUSDT', 'UNIUSDT', 'APTUSDT', 'FILUSDT', 'NEARUSDT']
+SYMBOLS = ["INJUSDT", "RENDERUSDT", "SOLUSDT", "NEARUSDT", "ARBUSDT", "MATICUSDT"]
 
 # Monitorear todos los SYMBOLS, pero abrir nuevas entradas solo en los aprobados.
 # Nuevas entradas: seleccionados por scanner MTF real (PF >= 1.5, WR >= 55%, trades >= 8).
 ENTRY_SYMBOLS = [
-    "SOLUSDT",
-    "UNIUSDT",
-    "RENDERUSDT",
-    "ARBUSDT",
-    "NEARUSDT",
     "INJUSDT",
+    "RENDERUSDT",
+    "SOLUSDT",
+    "NEARUSDT",
+    "ARBUSDT",
+    "MATICUSDT",
 ]
 
 # Reset estadístico tras auditoría cuantitativa. No borra la DB; solo evita mezclar
@@ -51,7 +51,7 @@ POSITION_SIZE_UNCERTAIN = 0.8    # 80% en normal/incertidumbre (subido de 0.6)
 # ─── Relajación de filtros para acelerar acumulación de datos ─────────────────
 # Símbolos donde se permite entrada aunque macro 4H sea neutral (no bajista).
 # Útil en paper trading para generar más trades de entrenamiento ML.
-RELAXED_MACRO_SYMBOLS = []
+RELAXED_MACRO_SYMBOLS = ["INJUSDT", "RENDERUSDT", "SOLUSDT"]
 
 # ─── Protección diaria ───────────────────────────────────────────────────────
 MAX_DAILY_LOSS_USDT  = 8.0     # Si perdemos $8 en el día → circuit breaker (ajustado a 3 posiciones × $167)
