@@ -358,11 +358,11 @@ class TradingBot:
     # ─────────────────────────────────────────────────────────────────────────
     def _analyze(self, symbol: str, can_open_new: bool = True):
         # ── Obtiene datos de múltiples timeframes ──────────────────────────────
-        klines_1h = self.api.get_klines(symbol, "1h", limit=KLINES_LIMIT)
+        klines_1h = self.api.get_klines(symbol, TIMEFRAME, limit=KLINES_LIMIT)
         klines_4h = self.api.get_klines(symbol, "4h", limit=300)  # 300 velas de 4H para asegurar datos suficientes para EMA200 (>210)
 
         if not klines_1h or not klines_4h:
-            logger.warning(f"Sin datos para {symbol} (1H o 4H)")
+            logger.warning(f"Sin datos para {symbol} ({TIMEFRAME} o 4H)")
             return
 
         df_1h = parse_klines_to_dataframe(klines_1h)
@@ -537,8 +537,8 @@ class TradingBot:
 
         cooldown_needed = MIN_BUY_COOLDOWN_S
         if consec_losses >= CONSECUTIVE_LOSS_MAX:
-            cooldown_needed = max(cooldown_needed, 12 * 3600)  # 12 horas pausa
-            logger.info(f"⚠️ {symbol} tiene {consec_losses} pérdidas seguidas. Cooldown extendido (12h).")
+            cooldown_needed = max(cooldown_needed, 4 * 3600)  # 4 horas pausa (reducido de 12h para 15min)
+            logger.info(f"⚠️ {symbol} tiene {consec_losses} pérdidas seguidas. Cooldown extendido (4h).")
         elif consec_losses > 0:
             cooldown_needed = max(cooldown_needed, SL_COOLDOWN_S)  # 8 horas pausa
 
@@ -554,7 +554,7 @@ class TradingBot:
 
         # Rechazo por alta volatilidad: calculate_sl_tp retorna None si ATR > 4%
         if sl is None:
-            logger.info(f"{symbol} | Trade RECHAZADO: volatilidad excesiva (SL > 4% del entry). Protegiendo R:R.")
+            logger.info(f"{symbol} | Trade RECHAZADO: volatilidad excesiva (SL > 2% del entry). Protegiendo R:R.")
             return
 
         # ── Objetivo de Take Profit estático ──────────────────────────────────
@@ -740,14 +740,14 @@ class TradingBot:
         adx_val = regime_info.get("adx", 0.0)
 
         if regime in ["TREND_STRONG_BULL", "TREND_BULL"]:
-            trailing_mult = 2.0  # Da más respiro en tendencias fuertes
-            breakeven_pct = 2.0  # Espera más para activar breakeven
+            trailing_mult = 3.0  # Más espacio en tendencias (ATR es más pequeño en 15min)
+            breakeven_pct = 1.0  # Activar breakeven RÁPIDO (1%) para proteger capital
         elif regime in ["RANGE_VOLATILE", "CHOPPY"]:
-            trailing_mult = 1.0  # Stop súper ajustado en ruido
-            breakeven_pct = 1.0  # Protege capital rápidamente
+            trailing_mult = 2.0  # Más holgura contra ruido de 15min
+            breakeven_pct = 0.5  # Proteger capital INMEDIATAMENTE (0.5%)
         else:
-            trailing_mult = 1.5
-            breakeven_pct = 1.5
+            trailing_mult = 2.5
+            breakeven_pct = 0.8
 
         # --- Actualizar Trailing Stop ---
         trailing_result = self.trailing.update_trailing_stop(

@@ -55,17 +55,17 @@ RELAXED_MACRO_SYMBOLS = ["INJUSDT", "RENDERUSDT", "SOLUSDT"]
 
 # ─── Protección diaria ───────────────────────────────────────────────────────
 MAX_DAILY_LOSS_USDT  = 8.0     # Si perdemos $8 en el día → circuit breaker (ajustado a 3 posiciones × $167)
-MAX_DAILY_TRADES     = 10      # Subido de 6→10 en paper trading para acelerar recolección de datos ML
+MAX_DAILY_TRADES     = 20      # 15MIN genera más señales → permitir más trades para alimentar ML
 
 # ─── Cooldown entre entradas ─────────────────────────────────────────
-MIN_BUY_COOLDOWN_H   = 4      # 4h mínimo entre entradas del mismo par (evita señales falsas consecutivas)
-MIN_BUY_COOLDOWN_S = MIN_BUY_COOLDOWN_H * 3600   # 4h de cooldown en segundos
-SL_COOLDOWN_S        = 4 * 3600     # 4h de cooldown extra después de un Stop Loss (mercado en contra)
-CONSECUTIVE_LOSS_MAX = 2            # Tras 2 pérdidas consecutivas en un símbolo → pausa de 12h
+MIN_BUY_COOLDOWN_H   = 1      # 1h mínimo entre entradas del mismo par (reducido para 15min)
+MIN_BUY_COOLDOWN_S = MIN_BUY_COOLDOWN_H * 3600   # 1h de cooldown en segundos
+SL_COOLDOWN_S        = 2 * 3600     # 2h de cooldown extra después de un Stop Loss
+CONSECUTIVE_LOSS_MAX = 2            # Tras 2 pérdidas consecutivas en un símbolo → pausa de 4h
 
 # ─── Indicadores técnicos ────────────────────────────────────────────────────
-TIMEFRAME       = "1h"
-KLINES_LIMIT    = 500   # Datos suficientes para EMA200 + margen (estabilización)
+TIMEFRAME       = "15m"  # Migrado de 1H a 15MIN para más trades y menor volatilidad
+KLINES_LIMIT    = 1000   # 1000 velas × 15min = 10.4 días (suficiente para EMA200 + warmup)
 EMA_CORTO       = 20
 EMA_LARGO       = 50
 RSI_PERIOD      = 14
@@ -74,10 +74,10 @@ RSI_MAX         = 72
 ATR_PERIOD      = 14
 ATR_MULTIPLIER  = 2.0
 ADX_PERIOD      = 14
-ADX_MIN         = 25    # Relajado de 27: tendencia clara sin exigir extremos
+ADX_MIN         = 20    # Reducido a 20 para 15min (ADX es naturalmente más bajo en timeframes cortos)
 
 # ─── Fibonacci ──────────────────────────────────────────────────────────────────
-FIBONACCI_PERIOD = 50   # Velas para encontrar swing high/low y calcular retrazos
+FIBONACCI_PERIOD = 200  # 200×15min = 50h (equivalente a 50×1H para misma cobertura temporal)
 FIBONACCI_BOUNCE_PCT = 0.8  # % de tolerancia para considerar un "bounce" en soporte Fibonacci (bajado de 1.0→0.8: más preciso)
 FIBONACCI_EXT_TP = 1.272    # Extensión Fibonacci para take profit parcial (127.2%)
 FIBONACCI_REQUIRE_IN_WEAK = True  # True = exige soporte Fibonacci para entrar en regímenes CHOPPY/RANGE
@@ -85,16 +85,16 @@ FIBONACCI_REQUIRE_IN_WEAK = True  # True = exige soporte Fibonacci para entrar e
 # ─── Stop Loss / Take Profit ─────────────────────────────────────────────────
 SL_ATR_MULT = 1.8   # Stop Loss = entry - (SL_ATR_MULT * ATR) [Optimizado de 2.0 a 1.8]
 TP_ATR_MULT = 2.3   # Take Profit = entry + (TP_ATR_MULT * ATR) [Optimizado de 2.5 a 2.3]
-PARTIAL_TP_PCT = 1.8  # % de ganancia para activar Venta Parcial [Punto medio conservador/rentable]
+PARTIAL_TP_PCT = 1.0  # % de ganancia para activar Venta Parcial [Ajustado para 15min: tomas de ganancia rápidas]
 
 # ─── Comisiones y Retención ──────────────────────────────────────────────────
 TRADING_FEE_RATE = 0.001   # 0.1% por operación (Binance Spot estándar)
-MIN_HOLD_HOURS   = 1.0    # Mínimo 1h antes de permitir salida por señal (evita ruido intra-vela)
+MIN_HOLD_HOURS   = 0.25   # Mínimo 15min (1 vela) antes de permitir salida por señal
 
 # ─── Sistema ─────────────────────────────────────────────────────────────────
 LOG_FILE         = "trading_bot.log"
 DB_FILE          = "trades.db"
-POLLING_INTERVAL = 60   # 1 min entre ciclos
+POLLING_INTERVAL = 45   # 45s entre ciclos (más frecuente para capturar señales de 15min)
 
 # ─── Proxy (para evitar bloqueos IP en Render/nube) ──────────────────────────
 PROXY_URL = os.getenv("PROXY_URL")  # Formato: http://user:pass@ip:port

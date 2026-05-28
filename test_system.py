@@ -55,17 +55,17 @@ def warn(name: str, fn):
 def make_trending_df(n=500, start_price=10.0, trend=0.001, seed=42) -> pd.DataFrame:
     """Genera un DataFrame OHLCV con tendencia alcista clara y OHLC lógicamente válido."""
     np.random.seed(seed)
-    timestamps = [datetime(2026, 1, 1) + timedelta(hours=i) for i in range(n)]
+    timestamps = [datetime(2026, 1, 1) + timedelta(minutes=15 * i) for i in range(n)]
     closes = [start_price]
     for i in range(1, n):
-        change = trend + np.random.normal(0, 0.008)
+        change = trend + np.random.normal(0, 0.003)
         closes.append(closes[-1] * (1 + change))
     closes = np.array(closes)
     opens  = np.roll(closes, 1); opens[0] = closes[0]
     # High = max(open, close) + random positive offset (garantiza high >= open y close)
-    highs  = np.maximum(opens, closes) * (1 + np.abs(np.random.normal(0, 0.005, n)))
+    highs  = np.maximum(opens, closes) * (1 + np.abs(np.random.normal(0, 0.002, n)))
     # Low  = min(open, close) - random positive offset (garantiza low <= open y close)
-    lows   = np.minimum(opens, closes) * (1 - np.abs(np.random.normal(0, 0.005, n)))
+    lows   = np.minimum(opens, closes) * (1 - np.abs(np.random.normal(0, 0.002, n)))
     volumes = np.random.uniform(1000, 5000, n)
     df = pd.DataFrame({
         "timestamp": timestamps,
@@ -77,11 +77,11 @@ def make_trending_df(n=500, start_price=10.0, trend=0.001, seed=42) -> pd.DataFr
 def make_ranging_df(n=500, center=10.0, amplitude=0.05, seed=99) -> pd.DataFrame:
     """Genera un DataFrame OHLCV lateral con OHLC lógicamente válido."""
     np.random.seed(seed)
-    timestamps = [datetime(2026, 1, 1) + timedelta(hours=i) for i in range(n)]
-    closes = center + amplitude * np.sin(np.linspace(0, 20 * np.pi, n)) + np.random.normal(0, 0.002, n)
+    timestamps = [datetime(2026, 1, 1) + timedelta(minutes=15 * i) for i in range(n)]
+    closes = center + amplitude * np.sin(np.linspace(0, 20 * np.pi, n)) + np.random.normal(0, 0.001, n)
     opens  = np.roll(closes, 1); opens[0] = closes[0]
-    highs  = np.maximum(opens, closes) * (1 + np.abs(np.random.normal(0, 0.003, n)))
-    lows   = np.minimum(opens, closes) * (1 - np.abs(np.random.normal(0, 0.003, n)))
+    highs  = np.maximum(opens, closes) * (1 + np.abs(np.random.normal(0, 0.001, n)))
+    lows   = np.minimum(opens, closes) * (1 - np.abs(np.random.normal(0, 0.001, n)))
     volumes = np.random.uniform(500, 2000, n)
     df = pd.DataFrame({
         "timestamp": timestamps,
@@ -514,32 +514,45 @@ def test_mtf_trending_market():
     return True
 
 def test_mtf_validate_entry_rejects_bad_macro():
-    """validate_entry_with_macro debe rechazar si macro no es válida."""
+    """Con relaxed=False, exige un score mínimo de 8 si la macro no es alcista (o en general)."""
     bad_macro = {"valid": False, "reason": "Test: macro inválida"}
     df_1h = strat.calculate_indicators(df_trend.copy())
     _, details_1h = strat.check_buy_signal(df_1h)
+    
+    # Forzamos el score a 7 para comprobar que es rechazado
+    details_1h["score"] = 7
     signal, details = mtf.validate_entry_with_macro(df_1h, bad_macro, True, details_1h, relaxed=False)
-    assert not signal, "MTF debe rechazar entrada con macro inválida (no relaxed)"
+    assert not signal, "MTF debe rechazar entrada no-elite si score es < 8"
+    
+    # Forzamos el score a 8 para comprobar que es aceptado
+    details_1h["score"] = 8
+    signal, details = mtf.validate_entry_with_macro(df_1h, bad_macro, True, details_1h, relaxed=False)
+    assert signal, "MTF debe aceptar entrada no-elite si score es >= 8"
     return True
 
 def test_mtf_validate_entry_relaxed():
-    """Con relaxed=True, macro inválida penaliza pero no bloquea."""
+    """Con relaxed=True, macro inválida NO penaliza y usa min_score normal."""
     bad_macro = {"valid": False, "reason": "Test: macro inválida"}
     df_1h = strat.calculate_indicators(df_trend.copy())
     _, details_1h = strat.check_buy_signal(df_1h)
-    # Con relaxed, no debe rechazar inmediatamente (puede rechazar por score bajo)
+    
+    # Forzamos score a 6, min_score normal es 6 (Trend strong bull)
+    details_1h["score"] = 6
+    details_1h["min_score"] = 6
+    
     signal, details = mtf.validate_entry_with_macro(df_1h, bad_macro, True, details_1h, relaxed=True)
-    # El combined_score debe ser score - 2
-    original_score = details_1h.get("score", 0)
-    expected_combined = original_score - 2
+    
+    # El combined_score debe ser igual al original (penalización 0)
+    expected_combined = 6
     assert details.get("combined_score") == expected_combined, \
         f"Score penalizado incorrecto: {details.get('combined_score')} vs {expected_combined}"
+    assert signal, "MTF debe aceptar entrada elite con score >= min_score sin importar macro"
     return True
 
 test("MTF: inválido con < 210 velas 4H", test_mtf_insufficient_data)
 test("MTF: analyze_macro_trend retorna claves correctas", test_mtf_trending_market)
-test("MTF: rechaza entrada con macro inválida", test_mtf_validate_entry_rejects_bad_macro)
-test("MTF: relaxed penaliza score -2", test_mtf_validate_entry_relaxed)
+test("MTF: exige score 8 para non-elite", test_mtf_validate_entry_rejects_bad_macro)
+test("MTF: relaxed no penaliza score", test_mtf_validate_entry_relaxed)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

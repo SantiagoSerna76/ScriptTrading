@@ -81,7 +81,7 @@ class StrategySignals:
     Señales basadas en puntuación + filtro macro EMA200.
     """
 
-    MIN_BUY_SCORE  = 6  # Bajado a 6 para permitir mayor frecuencia de trades (3-6 al día)
+    MIN_BUY_SCORE  = 7  # Subido a 7 para filtrar ruido de 15min (más señales falsas en TF cortos)
     MIN_SELL_SCORE = 3  # Bajado a 3 para cierres oportunos
 
     def __init__(self):
@@ -134,24 +134,24 @@ class StrategySignals:
         # Clasificación de régimen
         if adx_val >= 25 and close > ema200 and ema20 > ema50:
             regime = "TREND_STRONG_BULL"
-            min_score = 6  # Excelente tendencia, entradas muy fluidas
+            min_score = 7  # Excelente tendencia, entradas muy fluidas (alineado a MIN_BUY_SCORE)
             reason = f"Tendencia alcista fuerte (ADX={adx_val:.1f})"
         elif adx_val >= 20 and (close > ema200 or ema20 > ema50):
             regime = "TREND_WEAK"
-            min_score = 7  # Tendencia en desarrollo, buena frecuencia
+            min_score = 8  # Tendencia en desarrollo, mayor exigencia
             reason = f"Tendencia alcista moderada/débil (ADX={adx_val:.1f})"
         elif adx_val < 20:
             if volume > volume_sma and atr > atr_sma:
                 regime = "RANGE_VOLATILE"
-                min_score = 7  # Rango volátil
+                min_score = 8  # Rango volátil
                 reason = "Mercado en rango con volatilidad alta"
             else:
                 regime = "CHOPPY"
-                min_score = 8  # Lateral picado, exige buena señal pero no imposible
+                min_score = 9  # Lateral picado, exige mucha confirmación
                 reason = "Mercado lateral / consolidación de bajo volumen (Chop)"
         else:
             regime = "NORMAL"
-            min_score = 7
+            min_score = 8
             reason = "Condiciones normales de mercado"
             
         return {
@@ -348,11 +348,12 @@ class StrategySignals:
         atr = df.iloc[-1]["atr"]
         sl = entry - SL_ATR_MULT * atr
         
-        # PROTECCIÓN DE VOLATILIDAD: Si el SL natural (ATR) es > 6% del precio de entrada,
+        # PROTECCIÓN DE VOLATILIDAD: Si el SL natural (ATR) es > 2% del precio de entrada,
         # la moneda está demasiado volátil. Retornamos None en sl para que el llamante rechace el trade.
         # NO usamos un cap artificial (eso rompe el R:R). Mejor no entrar.
+        # ENDURECIDO: 2.0% máximo para que pérdidas nunca superen ganancias (PARTIAL_TP=1.0%)
         sl_distance_pct = (entry - sl) / entry * 100
-        if sl_distance_pct > 4.0:
+        if sl_distance_pct > 2.0:
             logger.warning(
                 f"Volatilidad excesiva detectada: SL natural a -{sl_distance_pct:.1f}% del entry "
                 f"(ATR={atr:.4f}). Trade RECHAZADO para proteger el R:R."

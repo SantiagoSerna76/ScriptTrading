@@ -77,7 +77,7 @@ def run_dynamic_scanner(db, notifier=None):
     la base de datos directamente con las mejores monedas (Hot-Swap).
     """
     if notifier:
-        notifier.send_message("🔍 *Iniciando escáner dinámico en background...* Evaluando 30 altcoins (60 días).")
+        notifier.send_message("🔍 *Iniciando escáner dinámico en background...* Evaluando 60 altcoins (15min, 10 días).")
     
     logger.info("Iniciando escaneo en background...")
     results = []

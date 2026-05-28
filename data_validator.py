@@ -53,7 +53,7 @@ class DataValidator:
         # 6. Gaps en timestamps
         if len(df) > 1:
             time_diffs = df['timestamp'].diff()
-            expected_diff = timedelta(hours=1)
+            expected_diff = timedelta(minutes=15)  # Migrado de 1H a 15MIN
             large_gaps = time_diffs > expected_diff * 1.5
             if large_gaps.sum() > 0:
                 gap_count = large_gaps.sum()

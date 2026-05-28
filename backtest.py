@@ -21,8 +21,9 @@ from config import (
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
-# Período mínimo de retención en velas (1 vela = 1 hora en timeframe 1H)
-MIN_HOLD_CANDLES = MIN_HOLD_HOURS
+# Período mínimo de retención en velas (1 vela = 15 min en timeframe 15m)
+# MIN_HOLD_HOURS=0.25 → 0.25h / 0.25h = 1 vela mínimo
+MIN_HOLD_CANDLES = max(1, int(MIN_HOLD_HOURS / 0.25))
 
 
 class Backtest:
@@ -66,9 +67,8 @@ class Backtest:
         
         df_4h_full = parse_klines_to_dataframe(klines_4h)
 
-        # En 1H, solo necesitamos suficiente historial para los indicadores 1H (ej. 50 velas)
-        # porque la EMA200 y macro ahora vienen de 4H
-        start = 50
+        # Para 15min, necesitamos al menos 210 velas de warmup para EMA200
+        start = 210
         if print_results:
             logger.info(f"Backtesting {self.symbol} | {len(df) - start} velas útiles | "
                         f"Capital: ${self.capital0:.2f} | Fee: {TRADING_FEE_RATE*100:.2f}%")
@@ -161,14 +161,14 @@ class Backtest:
                 regime_info = self.strategy.detect_market_regime(window)
                 regime = regime_info["regime"]
                 if regime in ["TREND_STRONG_BULL", "TREND_BULL"]:
-                    trailing_mult = 2.0   # Da más respiro en tendencias fuertes
-                    breakeven_pct  = 2.0  # Espera más para activar break-even
+                    trailing_mult = 3.0   # Más espacio en tendencias (ATR pequeño en 15min)
+                    breakeven_pct  = 1.0  # Breakeven rápido para proteger capital
                 elif regime in ["RANGE_VOLATILE", "CHOPPY"]:
-                    trailing_mult = 1.0   # Stop ajustado en mercados ruidosos
-                    breakeven_pct  = 1.0  # Protege capital rápidamente
+                    trailing_mult = 2.0   # Más holgura contra ruido de 15min
+                    breakeven_pct  = 0.5  # Protección inmediata
                 else:
-                    trailing_mult = 1.5
-                    breakeven_pct  = 1.5
+                    trailing_mult = 2.5
+                    breakeven_pct  = 0.8
 
                 trailing_result = self.trailing.update_trailing_stop(
                     entry_price=position["entry"],
