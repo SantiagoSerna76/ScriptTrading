@@ -196,7 +196,9 @@ document.addEventListener('DOMContentLoaded', () => {
             trades.forEach(t => {
                 const isWin = t.pnl >= 0;
                 const pnlClass = isWin ? 'positive' : 'negative';
-                const date = new Date(t.time).toLocaleString('es-ES', { month: 'short', day: 'numeric', hour: '2-digit', minute:'2-digit' });
+                // Append 'Z' to treat the date as UTC, so toLocaleString converts it to the user's local timezone
+                const dateString = t.time.endsWith('Z') ? t.time : t.time.replace(' ', 'T') + 'Z';
+                const date = new Date(dateString).toLocaleString('es-ES', { month: 'short', day: 'numeric', hour: '2-digit', minute:'2-digit' });
 
                 html += `
                     <tr>
