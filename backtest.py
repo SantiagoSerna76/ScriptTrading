@@ -161,14 +161,17 @@ class Backtest:
                 regime_info = self.strategy.detect_market_regime(window)
                 regime = regime_info["regime"]
                 if regime in ["TREND_STRONG_BULL", "TREND_BULL"]:
-                    trailing_mult = 3.0   # Más espacio en tendencias (ATR pequeño en 15min)
-                    breakeven_pct  = 1.0  # Breakeven rápido para proteger capital
+                    trailing_mult = 2.0   # Reducido de 3.0 → 2.0
+                    breakeven_pct  = 0.3  # Breakeven ultra-rápido
                 elif regime in ["RANGE_VOLATILE", "CHOPPY"]:
-                    trailing_mult = 2.0   # Más holgura contra ruido de 15min
-                    breakeven_pct  = 0.5  # Protección inmediata
+                    trailing_mult = 1.5   # Reducido de 2.0 → 1.5
+                    breakeven_pct  = 0.3  # Unificado
                 else:
-                    trailing_mult = 2.5
-                    breakeven_pct  = 0.8
+                    trailing_mult = 1.8   # Reducido de 2.5 → 1.8
+                    breakeven_pct  = 0.3  # Unificado
+
+                # HARD CAP: pérdida máxima absoluta del 0.8%
+                hard_cap_sl = position["entry"] * 0.992
 
                 trailing_result = self.trailing.update_trailing_stop(
                     entry_price=position["entry"],
@@ -179,22 +182,27 @@ class Backtest:
                     trailing_atr_mult=trailing_mult,
                     breakeven_pct=breakeven_pct,
                 )
-                position["trailing_sl"] = trailing_result["new_sl"]
+                # FLOOR: trailing SL nunca por debajo del hard cap
+                position["trailing_sl"] = max(trailing_result["new_sl"], hard_cap_sl)
 
                 exit_p, exit_r = None, None
                 hold_time = idx - position["entry_idx"]
 
-                # 1. Trailing Stop Hit — siempre activo
-                if price <= position["trailing_sl"]:
+                # 1. Hard Cap Hit (pérdida > 1.5%)
+                if price <= hard_cap_sl:
+                    exit_p, exit_r = price, "Hard Cap Loss 1.5%"
+
+                # 2. Trailing Stop Hit — siempre activo
+                elif price <= position["trailing_sl"]:
                     exit_p, exit_r = price, "Trailing Stop"
 
-                # 2. Señales de salida anticipada — SOLO después del período mínimo
+                # 3. Señales de salida anticipada — SOLO después del período mínimo
                 elif hold_time >= MIN_HOLD_CANDLES:
                     s_score, s_reason = self.strategy.exit_score(window)
                     if s_score >= self.strategy.MIN_SELL_SCORE:
                         exit_p, exit_r = price, s_reason or "Signal Exit"
 
-                # 3. RSI Crash — siempre activo, pero requiere caída
+                # 4. RSI Crash — siempre activo, pero requiere caída
                 if exit_p is None and current["rsi"] < 25 and price < position["entry"] * 0.97:
                     exit_p, exit_r = price, "RSI Crash + Drop >3%"
 

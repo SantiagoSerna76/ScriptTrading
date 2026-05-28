@@ -21,14 +21,12 @@ USE_TESTNET   = False   # False = usa Mainnet para datos reales de mercado
 SYMBOLS = ["INJUSDT", "RENDERUSDT", "SOLUSDT", "NEARUSDT", "ARBUSDT", "MATICUSDT"]
 
 # Monitorear todos los SYMBOLS, pero abrir nuevas entradas solo en los aprobados.
-# Nuevas entradas: seleccionados por scanner MTF real (PF >= 1.5, WR >= 55%, trades >= 8).
+# FILTRADO POST-BACKTEST 15m: Solo monedas con WR > 50% y PF > 0.8 en backtest.
+# SOL (WR 26%), ARB (WR 38%), MATIC (WR 39%) → ELIMINADOS por señales inconsistentes en 15m.
 ENTRY_SYMBOLS = [
     "INJUSDT",
     "RENDERUSDT",
-    "SOLUSDT",
     "NEARUSDT",
-    "ARBUSDT",
-    "MATICUSDT",
 ]
 
 # Reset estadístico tras auditoría cuantitativa. No borra la DB; solo evita mezclar
@@ -83,7 +81,7 @@ FIBONACCI_EXT_TP = 1.272    # Extensión Fibonacci para take profit parcial (127
 FIBONACCI_REQUIRE_IN_WEAK = True  # True = exige soporte Fibonacci para entrar en regímenes CHOPPY/RANGE
 
 # ─── Stop Loss / Take Profit ─────────────────────────────────────────────────
-SL_ATR_MULT = 1.8   # Stop Loss = entry - (SL_ATR_MULT * ATR) [Optimizado de 2.0 a 1.8]
+SL_ATR_MULT = 1.2   # Stop Loss = entry - (SL_ATR_MULT * ATR) [Apretado: 1.2 para que SL natural sea ~1.0-1.3%]
 TP_ATR_MULT = 2.3   # Take Profit = entry + (TP_ATR_MULT * ATR) [Optimizado de 2.5 a 2.3]
 PARTIAL_TP_PCT = 1.0  # % de ganancia para activar Venta Parcial [Ajustado para 15min: tomas de ganancia rápidas]
 
