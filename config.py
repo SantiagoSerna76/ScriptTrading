@@ -48,7 +48,7 @@ POSITION_SIZE_UNCERTAIN = 0.8    # 80% en normal/incertidumbre (subido de 0.6)
 RELAXED_MACRO_SYMBOLS = ['RENDERUSDT', 'TIAUSDT', 'FETUSDT', 'NEARUSDT', 'OCEANUSDT']
 
 # ─── Protección diaria ───────────────────────────────────────────────────────
-MAX_DAILY_LOSS_USDT  = 8.0     # Si perdemos $8 en el día → circuit breaker (ajustado a 3 posiciones × $167)
+MAX_DAILY_LOSS_USDT  = 20.0    # (TEMPORAL) Ampliado de 8.0 a 20.0 para ignorar las pérdidas falsas del hard cap de hoy
 MAX_DAILY_TRADES     = 20      # 15MIN genera más señales → permitir más trades para alimentar ML
 
 # ─── Cooldown entre entradas ─────────────────────────────────────────
