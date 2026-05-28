@@ -350,10 +350,9 @@ class StrategySignals:
         
         # PROTECCIÓN DE VOLATILIDAD: Si el SL natural (ATR) es > 2% del precio de entrada,
         # la moneda está demasiado volátil. Retornamos None en sl para que el llamante rechace el trade.
-        # NO usamos un cap artificial (eso rompe el R:R). Mejor no entrar.
-        # ENDURECIDO: 1.0% máximo para que pérdidas nunca superen ganancias (PARTIAL_TP=1.0%)
+        # Volvemos a 2.0% para no asfixiar los trades en 15 minutos.
         sl_distance_pct = (entry - sl) / entry * 100
-        if sl_distance_pct > 1.0:
+        if sl_distance_pct > 2.0:
             logger.warning(
                 f"Volatilidad excesiva detectada: SL natural a -{sl_distance_pct:.1f}% del entry "
                 f"(ATR={atr:.4f}). Trade RECHAZADO para proteger el R:R."

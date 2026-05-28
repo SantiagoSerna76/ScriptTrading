@@ -18,16 +18,12 @@ USE_TESTNET   = False   # False = usa Mainnet para datos reales de mercado
 # ─── Universo de Trading ─────────────────────────────────────────────────────
 # Seleccionados por scanner (30 pares, 60 días): solo símbolos con PF > 1.0 y P&L positivo
 # Universo monitoreado. NEAR se conserva para gestionar una posición abierta existente.
-SYMBOLS = ["INJUSDT", "RENDERUSDT", "SOLUSDT", "NEARUSDT", "ARBUSDT", "MATICUSDT"]
+SYMBOLS = ['RENDERUSDT', 'TIAUSDT', 'FETUSDT', 'NEARUSDT', 'OCEANUSDT']
 
 # Monitorear todos los SYMBOLS, pero abrir nuevas entradas solo en los aprobados.
 # FILTRADO POST-BACKTEST 15m: Solo monedas con WR > 50% y PF > 0.8 en backtest.
 # SOL (WR 26%), ARB (WR 38%), MATIC (WR 39%) → ELIMINADOS por señales inconsistentes en 15m.
-ENTRY_SYMBOLS = [
-    "INJUSDT",
-    "RENDERUSDT",
-    "NEARUSDT",
-]
+ENTRY_SYMBOLS = ['RENDERUSDT', 'TIAUSDT', 'FETUSDT', 'NEARUSDT', 'OCEANUSDT']
 
 # Reset estadístico tras auditoría cuantitativa. No borra la DB; solo evita mezclar
 # resultados de configuraciones antiguas con la estrategia activa.
@@ -49,7 +45,7 @@ POSITION_SIZE_UNCERTAIN = 0.8    # 80% en normal/incertidumbre (subido de 0.6)
 # ─── Relajación de filtros para acelerar acumulación de datos ─────────────────
 # Símbolos donde se permite entrada aunque macro 4H sea neutral (no bajista).
 # Útil en paper trading para generar más trades de entrenamiento ML.
-RELAXED_MACRO_SYMBOLS = ["INJUSDT", "RENDERUSDT", "SOLUSDT"]
+RELAXED_MACRO_SYMBOLS = ['RENDERUSDT', 'TIAUSDT', 'FETUSDT', 'NEARUSDT', 'OCEANUSDT']
 
 # ─── Protección diaria ───────────────────────────────────────────────────────
 MAX_DAILY_LOSS_USDT  = 8.0     # Si perdemos $8 en el día → circuit breaker (ajustado a 3 posiciones × $167)
@@ -81,9 +77,9 @@ FIBONACCI_EXT_TP = 1.272    # Extensión Fibonacci para take profit parcial (127
 FIBONACCI_REQUIRE_IN_WEAK = True  # True = exige soporte Fibonacci para entrar en regímenes CHOPPY/RANGE
 
 # ─── Stop Loss / Take Profit ─────────────────────────────────────────────────
-SL_ATR_MULT = 1.2   # Stop Loss = entry - (SL_ATR_MULT * ATR) [Apretado: 1.2 para que SL natural sea ~1.0-1.3%]
+SL_ATR_MULT = 1.8   # Stop Loss = entry - (SL_ATR_MULT * ATR) [Restaurado a 1.8 para evitar asfixia]
 TP_ATR_MULT = 2.3   # Take Profit = entry + (TP_ATR_MULT * ATR) [Optimizado de 2.5 a 2.3]
-PARTIAL_TP_PCT = 1.0  # % de ganancia para activar Venta Parcial [Ajustado para 15min: tomas de ganancia rápidas]
+PARTIAL_TP_PCT = 2.0  # % de ganancia para activar Venta Parcial [Aumentado para asegurar que gains > losses]
 
 # ─── Comisiones y Retención ──────────────────────────────────────────────────
 TRADING_FEE_RATE = 0.001   # 0.1% por operación (Binance Spot estándar)

@@ -749,13 +749,6 @@ class TradingBot:
             trailing_mult = 1.8  # Reducido de 2.5 → 1.8
             breakeven_pct = 0.3  # Unificado a 0.3%
 
-        # ── HARD CAP DE PÉRDIDA MÁXIMA (0.8%) ──────────────────────────────────
-        # Sin importar el trailing stop, si la posición pierde más del 0.8%
-        # del precio de entrada, se cierra INMEDIATAMENTE.
-        # Matemática: Ganancia parcial al 1% sobre 50% = ~$0.67.
-        #             Pérdida hard cap 0.8% sobre 100% = ~$0.53.
-        #             → Pérdida SIEMPRE menor que ganancia. Rentable desde WR > 45%.
-        hard_cap_sl = entry * 0.992  # 0.8% máximo de pérdida
 
         # --- Actualizar Trailing Stop ---
         trailing_result = self.trailing.update_trailing_stop(
@@ -769,9 +762,6 @@ class TradingBot:
         )
 
         current_sl = trailing_result["new_sl"]
-
-        # ── FLOOR: El SL nunca puede ser menor que el hard cap ──────────────
-        current_sl = max(current_sl, hard_cap_sl)
 
         sl_moved = current_sl != trade["trailing_sl"]
         trade["trailing_sl"] = current_sl
@@ -814,12 +804,8 @@ class TradingBot:
                 logger.info(f"{symbol} | 🛡️  SL movido a Break-Even (${trade['entry_price']:.4f}) después de venta parcial en TP")
                 return
 
-        # 1. Hard Cap Hit (pérdida > 1.5%)
-        if price <= hard_cap_sl:
-            exit_price, exit_reason = price, f"Hard Cap Loss 1.5% (SL ${hard_cap_sl:.4f})"
-
-        # 2. Trailing Stop Hit
-        elif price <= current_sl:
+        # 1. Trailing Stop Hit
+        if price <= current_sl:
             exit_price, exit_reason = price, f"Trailing Stop (SL ${current_sl:.4f})"
 
         # 2. Señales de salida anticipada (score-based) — SOLO después del período mínimo

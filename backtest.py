@@ -170,8 +170,7 @@ class Backtest:
                     trailing_mult = 1.8   # Reducido de 2.5 → 1.8
                     breakeven_pct  = 0.3  # Unificado
 
-                # HARD CAP: pérdida máxima absoluta del 0.8%
-                hard_cap_sl = position["entry"] * 0.992
+
 
                 trailing_result = self.trailing.update_trailing_stop(
                     entry_price=position["entry"],
@@ -182,18 +181,13 @@ class Backtest:
                     trailing_atr_mult=trailing_mult,
                     breakeven_pct=breakeven_pct,
                 )
-                # FLOOR: trailing SL nunca por debajo del hard cap
-                position["trailing_sl"] = max(trailing_result["new_sl"], hard_cap_sl)
+                position["trailing_sl"] = trailing_result["new_sl"]
 
                 exit_p, exit_r = None, None
                 hold_time = idx - position["entry_idx"]
 
-                # 1. Hard Cap Hit (pérdida > 1.5%)
-                if price <= hard_cap_sl:
-                    exit_p, exit_r = price, "Hard Cap Loss 1.5%"
-
-                # 2. Trailing Stop Hit — siempre activo
-                elif price <= position["trailing_sl"]:
+                # 1. Trailing Stop Hit — siempre activo
+                if price <= position["trailing_sl"]:
                     exit_p, exit_r = price, "Trailing Stop"
 
                 # 3. Señales de salida anticipada — SOLO después del período mínimo
