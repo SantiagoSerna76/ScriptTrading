@@ -153,9 +153,9 @@ class StrategySignals:
         
         4 condiciones claras:
         1. Precio > EMA200 (macro uptrend)
-        2. Precio < Banda Inferior de Bollinger (panic crash)
-        3. RSI < 28 (sobreventa extrema)
-        4. ADX ≥ 20 (fuerza de tendencia, evita mercados muertos)
+        2. Precio < Banda Inferior de Bollinger o dentro del 0.5% (pánico / estirón)
+        3. RSI < 38 (sobreventa — zona de rebote)
+        4. ADX ≥ 18 (fuerza de tendencia, evita mercados muertos)
         """
         if df is None or len(df) < 210:
             return False, {}
@@ -165,7 +165,7 @@ class StrategySignals:
         score   = 0
         details = {}
         
-        self.MIN_BUY_SCORE = 4 # Ahora son 4 condiciones mandatorias
+        self.MIN_BUY_SCORE = 4  # 4 condiciones mandatorias
 
         # ── 1. MACRO TREND: Precio > EMA200 ──────────────────────────────
         ema200 = last["ema200"]
@@ -175,26 +175,28 @@ class StrategySignals:
         if macro_bullish:
             score += 1
 
-        # ── 2. PANIC CRASH: Precio < Lower Bollinger Band ──────────────────
+        # ── 2. PANIC / ESTIRÓN: Precio cerca o debajo de Lower BB ────────
         lower_bb = last["bb_lower"]
-        panic_crash = last["close"] < lower_bb
+        # Aceptar si precio está debajo de la banda O dentro del 0.5% de ella
+        bb_threshold = lower_bb * 1.005
+        panic_crash = last["close"] <= bb_threshold
         details["panic_crash"] = panic_crash
         details["lower_bb"] = round(lower_bb, 4)
         if panic_crash:
             score += 1
 
-        # ── 3. RSI EXTREMO: < 28 ───────────────────────────────────────────
+        # ── 3. RSI SOBREVENTA: < 38 ──────────────────────────────────────
         rsi_val = round(last["rsi"], 2)
         details["rsi"] = rsi_val
-        rsi_ok = rsi_val < 28
+        rsi_ok = rsi_val < 38
         details["rsi_ok"] = rsi_ok
         if rsi_ok:
             score += 1
 
-        # ── 4. ADX ≥ 20: Tendencia real ─────────────────────────────────
+        # ── 4. ADX ≥ 18: Tendencia real ──────────────────────────────────
         adx_val = round(last["adx"], 2)
         details["adx"] = adx_val
-        adx_ok = adx_val >= ADX_MIN
+        adx_ok = adx_val >= 18
         details["adx_ok"] = adx_ok
         if adx_ok:
             score += 1

@@ -457,7 +457,7 @@ class TradingBot:
         )
 
         # ── Combina señal 1H + validación macro 4H ────────────────────────────
-        if buy_signal_1h or conds_1h.get('score', 0) >= 6:
+        if buy_signal_1h or conds_1h.get('score', 0) >= 3:
             if "No hay suficientes datos 4H" not in macro_conds.get('reason', ''):
                 # Validación MTF completa con datos de 4H
                 relaxed = symbol in self.relaxed_symbols

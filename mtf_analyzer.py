@@ -52,10 +52,10 @@ class MultiTimeframeAnalyzer:
             "macd": round(last["macd"], 4),
         }
 
-        # Condiciones hard (deben cumplirse TODAS — MACD pasa a ser informativo/bonus)
+        # Condiciones hard: para Mean Reversion solo necesitamos tendencia macro alcista
+        # La alineación EMA20 > EMA50 ya no es obligatoria (compramos dips que rompen eso)
         all_valid = all([
             conditions["price_above_ema200"],
-            conditions["ema_bullish"],
             conditions["adx_strong"],
         ])
 
@@ -131,8 +131,8 @@ class MultiTimeframeAnalyzer:
             "adx": macro_conditions.get("adx"),
             "macd": macro_conditions.get("macd"),
         }
-        # Determinar score mínimo necesario basado en si es Elite (relaxed) o Francotirador (non-elite)
-        effective_min_score = 6 if relaxed else max(8, conditions_1h.get("min_score", 8))
+        # Determinar score mínimo: Cazador de Anomalías tiene 4 condiciones base
+        effective_min_score = 3 if relaxed else 4
         
         is_valid = combined_score >= effective_min_score
 
