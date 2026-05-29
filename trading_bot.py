@@ -18,11 +18,17 @@ from config import (
     MAX_OPEN_POSITIONS, MIN_BUY_COOLDOWN_S,
     MAX_DAILY_LOSS_USDT, MAX_DAILY_TRADES,
     MIN_ORDER_NOTIONAL, KLINES_LIMIT, MIN_HOLD_HOURS,
-    PAPER_TRADING, USE_TESTNET, TRADING_FEE_RATE, PARTIAL_TP_PCT, ADX_MIN,
+    PAPER_TRADING, USE_TESTNET, TRADING_FEE_RATE, ADX_MIN,
     RELAXED_MACRO_SYMBOLS, ENTRY_SYMBOLS, PROXY_URL
 )
 from binance_api import BinanceAPI, parse_klines_to_dataframe
-from strategy import StrategySignals, RiskManager, TrailingStopManager
+from strategy import StrategySignals
+try:
+    from strategy import RiskManager, TrailingStopManager
+except ImportError:
+    # Pullback Sniper: estos módulos ya no existen en strategy.py simplificado
+    RiskManager = None
+    TrailingStopManager = None
 from mtf_analyzer import MultiTimeframeAnalyzer
 from microstructure import OrderBookAnalyzer
 from database import TradeDatabase
@@ -63,11 +69,11 @@ class TradingBot:
         self.paper_trading = PAPER_TRADING
         self.api      = BinanceAPI(API_KEY, SECRET_KEY, use_testnet=USE_TESTNET, proxy_url=PROXY_URL)
         self.strategy = StrategySignals()
-        self.risk     = RiskManager()
+        self.risk     = RiskManager() if RiskManager else None
         self.db       = TradeDatabase()
         self.mtf      = MultiTimeframeAnalyzer()
         self.ob       = OrderBookAnalyzer(API_KEY, SECRET_KEY, proxy_url=PROXY_URL)
-        self.trailing = TrailingStopManager()
+        self.trailing = TrailingStopManager() if TrailingStopManager else None
         self.notifier = TelegramNotifier()
         self.ml_filter = MLSignalFilter()
 
@@ -717,134 +723,33 @@ class TradingBot:
             f"Modo: {mode_tag.strip() or 'REAL'}"
         )
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # Verificar salida (ahora con Trailing Stop dinámico)
-    # ─────────────────────────────────────────────────────────────────────────
     def _check_exit(self, symbol: str, price: float, df):
+        """
+        Pullback Sniper Exit: Solo SL/TP fijos.
+        Sin trailing stop. Sin ventas parciales. Sin breakeven.
+        """
         trade = self.open_trades[symbol]
         entry    = trade["entry_price"]
-        initial_sl = trade["stop_loss"]
+        sl       = trade["stop_loss"]
+        tp       = trade["take_profit"]
         trade_id = trade["trade_id"]
-        last     = df.iloc[-1]
 
-        # Actualiza máximo histórico de la posición
-        max_updated = False
+        # Actualiza máximo histórico (solo para logging/dashboard)
         if price > trade["max_price"]:
             trade["max_price"] = price
-            max_updated = True
-
-        # ── NUEVO: Trailing Stop dinámico
-        # Inteligencia Dinámica: El trailing stop se ajusta al régimen ACTUAL del mercado
-        regime_info = self.strategy.detect_market_regime(df)
-        regime = regime_info["regime"]
-        adx_val = regime_info.get("adx", 0.0)
-
-        if regime in ["TREND_STRONG_BULL", "TREND_BULL"]:
-            trailing_mult = 2.0  # Reducido de 3.0 → 2.0 para limitar pérdida máxima
-            breakeven_pct = 0.3  # Breakeven ultra-rápido: apenas +0.3% → proteger capital
-        elif regime in ["RANGE_VOLATILE", "CHOPPY"]:
-            trailing_mult = 1.5  # Reducido de 2.0 → 1.5 para mercados laterales
-            breakeven_pct = 0.3  # Unificado a 0.3%
-        else:
-            trailing_mult = 1.8  # Reducido de 2.5 → 1.8
-            breakeven_pct = 0.3  # Unificado a 0.3%
-
-
-        # --- Actualizar Trailing Stop ---
-        trailing_result = self.trailing.update_trailing_stop(
-            entry_price=trade["entry_price"],
-            current_price=price,
-            current_atr=last["atr"],
-            max_price=trade["max_price"],
-            initial_sl=trade["stop_loss"],
-            trailing_atr_mult=trailing_mult,
-            breakeven_pct=breakeven_pct
-        )
-
-        current_sl = trailing_result["new_sl"]
-
-        sl_moved = current_sl != trade["trailing_sl"]
-        trade["trailing_sl"] = current_sl
-
-        # Guardar en base de datos si hubo cambios en max_price o en trailing_sl
-        if max_updated or sl_moved:
-            self.db.update_trailing_sl(trade_id, current_sl, trade["max_price"])
-
-        # Muestra movimiento del SL solo si realmente cambió respecto al ciclo anterior
-        if sl_moved:
-            movement_pct = (current_sl / initial_sl - 1) * 100
-            logger.info(
-                f"{symbol} | Trailing SL actualizado: ${initial_sl:.4f} → ${current_sl:.4f} "
-                f"(+{movement_pct:.2f}%)"
-            )
 
         exit_price  = None
         exit_reason = None
 
-        # ── TP Objetivo alcanzado → Venta Parcial + SL a breakeven ──────────────
-        # Si el precio llega al objetivo de TP se vende el 50% de la posición
-        # y el SL se mueve al precio de entrada (sin pérdidas).
-        # El resto de la posición continúa con trailing SL.
-        tp_target = self._resolve_tp_target(trade.get("tp_target"), trade.get("take_profit"))
-        if (
-            tp_target > 0
-            and not trade.get("partial_exit_done", False)
-            and price >= tp_target
-            and (datetime.now() - trade["opened_at"]).total_seconds() >= MIN_HOLD_HOURS * 3600
-        ):
-            if self._execute_partial_exit(
-                symbol, price, trade_id, trade,
-                reason=f"TP Objetivo alcanzado (${tp_target:.4f})",
-                exit_quantity=trade["quantity"] * 0.5,
-            ):
-                # BUG-INJ FIX: Elevar TANTO trailing_sl COMO stop_loss base a breakeven
-                trade["trailing_sl"] = trade["entry_price"]
-                trade["stop_loss"] = trade["entry_price"]  # <-- CRÍTICO: piso del trailing
-                self.db.update_trailing_sl(trade_id, trade["entry_price"], trade["max_price"])
-                logger.info(f"{symbol} | 🛡️  SL movido a Break-Even (${trade['entry_price']:.4f}) después de venta parcial en TP")
-                return
+        # 1. Take Profit Hit → cerrar TODO
+        if price >= tp:
+            exit_price  = price
+            exit_reason = f"Take Profit (TP ${tp:.4f})"
 
-        # 1. Trailing Stop Hit
-        if price <= current_sl:
-            exit_price, exit_reason = price, f"Trailing Stop (SL ${current_sl:.4f})"
-
-        # 2. Señales de salida anticipada (score-based) — SOLO después del período mínimo
-        elif (datetime.now() - trade["opened_at"]).total_seconds() >= MIN_HOLD_HOURS * 3600:
-            s_score, s_reason = self.strategy.exit_score(df)
-            if s_score >= self.strategy.MIN_SELL_SCORE:
-                exit_price, exit_reason = price, s_reason
-
-        # 3. RSI extremadamente bajo (crash en curso)
-        # Ajuste: No requiere ADX alto, pero sí confirmación de caída severa de precio y RSI
-        if exit_price is None and last["rsi"] < 25:
-            # Solo salir si el precio cayó significativamente desde la entrada (ej. > 3%)
-            # para evitar cerrar en un pullback normal
-            if price < entry * 0.97:
-                exit_price, exit_reason = price, "RSI Crash (<25) + Drop >3%"
-
-        # 4. Cierre parcial opcional de ganancias (mutuamente excluyente con TP parcial)
-        if exit_price is None and not trade.get("partial_exit_done"):
-            partial = self.trailing.calculate_partial_exit(
-                entry_price=entry,
-                current_price=price,
-                total_quantity=trade["quantity"],
-                profit_target_pct=PARTIAL_TP_PCT,
-            )
-            if partial.get("should_exit_partial"):
-                logger.info(f"{symbol} | 💰 Cierre parcial activado: {partial['reason']}")
-                if self._execute_partial_exit(
-                    symbol, price, trade_id, trade,
-                    partial["reason"], exit_quantity=partial["exit_quantity"],
-                ):
-                    # BUG-INJ FIX: Elevar TANTO el trailing_sl COMO el stop_loss base
-                    # al precio de entrada. Sin esto, el trailing stop manager
-                    # recalcula usando initial_sl (el SL original) y puede generar
-                    # un SL por debajo del entry en el siguiente ciclo.
-                    trade["trailing_sl"] = entry
-                    trade["stop_loss"] = entry  # <-- CRÍTICO: piso del trailing
-                    self.db.update_trailing_sl(trade_id, entry, trade["max_price"])
-                    logger.info(f"{symbol} | 🛡️ Trailing Stop movido a Break-Even (${entry:.4f})")
-                    return
+        # 2. Stop Loss Hit → cerrar TODO
+        elif price <= sl:
+            exit_price  = price
+            exit_reason = f"Stop Loss (SL ${sl:.4f})"
 
         if exit_price is None:
             return

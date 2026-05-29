@@ -50,10 +50,14 @@ class DataValidator:
         if negative_prices.any():
             issues.append(f"Precios negativos o cero: {negative_prices.sum()} velas")
         
-        # 6. Gaps en timestamps
+        # 6. Gaps en timestamps — dinámico según TIMEFRAME
         if len(df) > 1:
             time_diffs = df['timestamp'].diff()
-            expected_diff = timedelta(minutes=15)  # Migrado de 1H a 15MIN
+            # Calcular expected_diff dinámicamente desde config.TIMEFRAME
+            from config import TIMEFRAME
+            tf_map = {"1m": 1, "5m": 5, "15m": 15, "30m": 30, "1h": 60, "4h": 240, "1d": 1440}
+            minutes = tf_map.get(TIMEFRAME, 60)
+            expected_diff = timedelta(minutes=minutes)
             large_gaps = time_diffs > expected_diff * 1.5
             if large_gaps.sum() > 0:
                 gap_count = large_gaps.sum()
