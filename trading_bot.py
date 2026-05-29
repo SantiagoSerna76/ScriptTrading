@@ -569,25 +569,23 @@ class TradingBot:
         # El resto de la posición continúa con trailing SL.
         risk_per_unit = abs(entry_price - sl)  # riesgo $ por unidad
 
-        # 1. Cálculo de tamaño (Sizing) basado en riesgo (Kelly)
-        stats = self.db.get_symbol_trades_stats(symbol)
-        risk_pct = self.risk.calculate_kelly_risk(stats, RIESGO_POR_TRADE)
-
-        # Calcular cantidad ideal basado en el riesgo sobre el CAPITAL TOTAL DINÁMICO.
-        # capital_per_trade se recalcula cada ciclo con el balance real (línea ~309),
-        # así que capital_per_trade × MAX_OPEN_POSITIONS = balance actual real.
-        current_total_capital = self.capital_per_trade * MAX_OPEN_POSITIONS
-        qty_risk_based = self.risk.position_size(
-            current_total_capital, entry_price, sl, risk_pct
-        )
+        # 1. Cálculo de tamaño (Sizing)
+        if self.risk:
+            stats = self.db.get_symbol_trades_stats(symbol)
+            risk_pct = self.risk.calculate_kelly_risk(stats, RIESGO_POR_TRADE)
+            current_total_capital = self.capital_per_trade * MAX_OPEN_POSITIONS
+            qty_risk_based = self.risk.position_size(
+                current_total_capital, entry_price, sl, risk_pct
+            )
+        else:
+            risk_pct = RIESGO_POR_TRADE
+            qty_risk_based = self.capital_per_trade / entry_price
 
         # 2. Aplicación de multiplicador de régimen (Ajuste estratégico)
         regime = conds.get('regime', 'NORMAL')
         size_multiplier = self.strategy.get_position_size_multiplier(regime)
 
         # 3. Calcular posición final
-        # En TRENDING (mult=1.0): usar 100% del slot (capital_per_trade), sin limitación por fórmula de riesgo.
-        # En otros regímenes: el multiplicador reduce el slot disponible.
         max_qty_by_cap = (self.capital_per_trade * size_multiplier) / entry_price
         qty = min(qty_risk_based, max_qty_by_cap) if size_multiplier < 1.0 else max_qty_by_cap
 
@@ -607,10 +605,16 @@ class TradingBot:
             real_balance = CAPITAL_TOTAL_USDT
         else:
             real_balance = self.api.get_usdt_balance()
-        ok, msg = self.risk.validate_trade(qty_rounded, entry_price, real_balance, MIN_ORDER_NOTIONAL)
-        if not ok:
-            logger.warning(f"Trade rechazado ({symbol}): {msg}")
-            return
+        if self.risk:
+            ok, msg = self.risk.validate_trade(qty_rounded, entry_price, real_balance, MIN_ORDER_NOTIONAL)
+            if not ok:
+                logger.warning(f"Trade rechazado ({symbol}): {msg}")
+                return
+        else:
+            # Validación simple sin RiskManager
+            if qty_rounded * entry_price < MIN_ORDER_NOTIONAL:
+                logger.warning(f"Trade rechazado ({symbol}): notional ${qty_rounded * entry_price:.2f} < min ${MIN_ORDER_NOTIONAL}")
+                return
 
         # ── Validación de Order Book ─────────────────────────────────
         logger.info(f"{symbol} | Validando microestructura (Order Book)...")

@@ -82,7 +82,7 @@ class Backtest:
                 signal_1h, conds_1h = self.strategy.check_buy_signal(window)
                 
                 # Validar con MTF
-                if signal_1h or conds_1h.get('score', 0) >= 6:
+                if signal_1h or conds_1h.get('score', 0) >= 3:
                     # Encontrar los datos de 4H disponibles hasta este momento de forma optimizada
                     current_ts = current["timestamp"]
                     idx_4h = df_4h_full["timestamp"].searchsorted(current_ts, side="right")
