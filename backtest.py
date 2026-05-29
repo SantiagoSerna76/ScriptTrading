@@ -11,7 +11,7 @@ from mtf_analyzer import MultiTimeframeAnalyzer
 from data_validator import DataValidator, BacktestValidator
 from config import (
     CAPITAL_TOTAL_USDT, RIESGO_POR_TRADE, TIMEFRAME,
-    SL_ATR_MULT, TP_ATR_MULT, SYMBOLS, MAX_OPEN_POSITIONS,
+    SL_ATR_MULT, SYMBOLS, MAX_OPEN_POSITIONS,
     TRADING_FEE_RATE, MIN_HOLD_HOURS,
     RELAXED_MACRO_SYMBOLS, PROXY_URL,
 )
