@@ -1,29 +1,28 @@
 #!/usr/bin/env python3
 """
-Backtesting mejorado — usa la misma estrategia del bot en vivo.
-Incluye: Trailing Stop dinámico, Multi-Timeframe, gestión de riesgo,
-         simulación de comisiones y período mínimo de retención.
+Backtesting Pullback Sniper — SL/TP fijos, sin trailing.
 """
 
 import logging
 import pandas as pd
 from binance_api import BinanceAPI, parse_klines_to_dataframe
-from strategy import StrategySignals, RiskManager, TrailingStopManager
+from strategy import StrategySignals
 from mtf_analyzer import MultiTimeframeAnalyzer
 from data_validator import DataValidator, BacktestValidator
 from config import (
     CAPITAL_TOTAL_USDT, RIESGO_POR_TRADE, TIMEFRAME,
     SL_ATR_MULT, TP_ATR_MULT, SYMBOLS, MAX_OPEN_POSITIONS,
-    TRADING_FEE_RATE, MIN_HOLD_HOURS, PARTIAL_TP_PCT,
+    TRADING_FEE_RATE, MIN_HOLD_HOURS,
     RELAXED_MACRO_SYMBOLS, PROXY_URL,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
-# Período mínimo de retención en velas (1 vela = 15 min en timeframe 15m)
-# MIN_HOLD_HOURS=0.25 → 0.25h / 0.25h = 1 vela mínimo
-MIN_HOLD_CANDLES = max(1, int(MIN_HOLD_HOURS / 0.25))
+# Período mínimo de retención en velas
+# 1H candles: MIN_HOLD_HOURS=1.0 → 1 vela
+tf_hours = {"1m": 1/60, "5m": 5/60, "15m": 0.25, "30m": 0.5, "1h": 1.0, "4h": 4.0}
+MIN_HOLD_CANDLES = max(1, int(MIN_HOLD_HOURS / tf_hours.get(TIMEFRAME, 1.0)))
 
 
 class Backtest:
@@ -33,9 +32,7 @@ class Backtest:
         self.capital0 = initial_capital
         self.capital  = initial_capital
         self.strategy = StrategySignals()
-        self.risk     = RiskManager()
         self.mtf      = MultiTimeframeAnalyzer()
-        self.trailing = TrailingStopManager()
         self.api      = BinanceAPI("", "", use_testnet=False, proxy_url=PROXY_URL)
         self.trades   = []
         self.total_fees = 0.0
@@ -110,22 +107,12 @@ class Backtest:
                         
                     capital_per_trade = self.capital / MAX_OPEN_POSITIONS
                     
-                    # Criterio de Kelly dinámico en backtesting
-                    stats = self._get_simulated_stats()
-                    risk_pct = self.risk.calculate_kelly_risk(stats, RIESGO_POR_TRADE)
-                    
-                    # NUEVO: Sizing sobre capital total dinámico, TRENDING usa 100% del slot
-                    qty_risk = self.risk.position_size(self.capital, price, sl, risk_pct)
-                    
-                    regime = conds.get("regime", "NORMAL")
+                    # Sizing simple: capital_per_trade / price
+                    regime = conds.get("regime") or conds_1h.get("regime", "NORMAL")
                     size_multiplier = self.strategy.get_position_size_multiplier(regime)
+                    risk_pct = RIESGO_POR_TRADE
                     
-                    max_qty_by_cap = (capital_per_trade * size_multiplier) / price
-                    
-                    if size_multiplier < 1.0:
-                        qty = min(qty_risk, max_qty_by_cap)
-                    else:
-                        qty = max_qty_by_cap  # TRENDING usa el 100%
+                    qty = (capital_per_trade * size_multiplier) / price
                         
                     notional = qty * price
                     if qty > 0 and notional >= 5:
@@ -152,78 +139,29 @@ class Backtest:
                             "risk_pct": risk_pct,
                         }
 
-            # Con posición: verifica salida
+            # Con posición: verifica salida con SL/TP FIJOS
             else:
                 if price > position["max"]:
                     position["max"] = price
 
-                # Trailing Stop dinámico — misma lógica que el bot en vivo
-                regime_info = self.strategy.detect_market_regime(window)
-                regime = regime_info["regime"]
-                if regime in ["TREND_STRONG_BULL", "TREND_BULL"]:
-                    trailing_mult = 2.0   # Reducido de 3.0 → 2.0
-                    breakeven_pct  = 0.3  # Breakeven ultra-rápido
-                elif regime in ["RANGE_VOLATILE", "CHOPPY"]:
-                    trailing_mult = 1.5   # Reducido de 2.0 → 1.5
-                    breakeven_pct  = 0.3  # Unificado
-                else:
-                    trailing_mult = 1.8   # Reducido de 2.5 → 1.8
-                    breakeven_pct  = 0.3  # Unificado
-
-
-
-                trailing_result = self.trailing.update_trailing_stop(
-                    entry_price=position["entry"],
-                    current_price=price,
-                    current_atr=current["atr"],
-                    max_price=position["max"],
-                    initial_sl=position["sl"],
-                    trailing_atr_mult=trailing_mult,
-                    breakeven_pct=breakeven_pct,
-                )
-                position["trailing_sl"] = trailing_result["new_sl"]
-
                 exit_p, exit_r = None, None
                 hold_time = idx - position["entry_idx"]
+                low = current["low"]
+                high = current["high"]
 
-                # 1. Trailing Stop Hit — siempre activo
-                if price <= position["trailing_sl"]:
-                    exit_p, exit_r = price, "Trailing Stop"
+                # Mínimo 1 vela de hold
+                if hold_time < MIN_HOLD_CANDLES:
+                    continue
 
-                # 3. Señales de salida anticipada — SOLO después del período mínimo
-                elif hold_time >= MIN_HOLD_CANDLES:
-                    s_score, s_reason = self.strategy.exit_score(window)
-                    if s_score >= self.strategy.MIN_SELL_SCORE:
-                        exit_p, exit_r = price, s_reason or "Signal Exit"
+                # 1. Stop Loss Hit (check candle low)
+                if low <= position["sl"]:
+                    exit_p = position["sl"]  # Salir al precio del SL, no al low
+                    exit_r = "Stop Loss"
 
-                # 4. RSI Crash — siempre activo, pero requiere caída
-                if exit_p is None and current["rsi"] < 25 and price < position["entry"] * 0.97:
-                    exit_p, exit_r = price, "RSI Crash + Drop >3%"
-
-                # 4. Cierre Parcial Seguro
-                if exit_p is None and not position.get("partial_exit_done"):
-                    gain_pct = (price / position["entry"] - 1) * 100
-                    if gain_pct >= PARTIAL_TP_PCT:
-                        exit_qty = position["qty"] * 0.5
-                        sell_fee = (price * exit_qty) * TRADING_FEE_RATE
-                        self.total_fees += sell_fee
-                        
-                        pnl = (price - position["entry"]) * exit_qty - sell_fee - (position["entry"] * exit_qty * TRADING_FEE_RATE)
-                        pct = gain_pct
-                        
-                        self.capital += (price - position["entry"]) * exit_qty - sell_fee
-                        self.trades.append({
-                            "entry": position["entry"], "exit": price,
-                            "qty": exit_qty, "pnl": pnl, "pct": pct,
-                            "reason": "Cierre Parcial (50%)", "dur": hold_time,
-                            "score": position["score"], "macro": position["macro"],
-                            "max_sl": position["max"],
-                            "regime": position["regime"],
-                        })
-                        
-                        position["partial_exit_done"] = True
-                        position["qty"] -= exit_qty
-                        position["trailing_sl"] = position["entry"]
+                # 2. Take Profit Hit (check candle high) — solo si SL no fue tocado
+                elif high >= position["tp"]:
+                    exit_p = position["tp"]  # Salir al precio del TP, no al high
+                    exit_r = "Take Profit"
 
                 if exit_p:
                     # Descontar comisión de venta
@@ -240,7 +178,6 @@ class Backtest:
                         "reason": exit_r, "dur": hold_time,
                         "score": position["score"], "macro": position["macro"],
                         "max_sl": position["max"],
-                        "breakeven": trailing_result.get("breakeven_active", False),
                         "regime": position.get("regime", "NORMAL"),
                         "risk_pct": position.get("risk_pct", 0.02),
                     })
