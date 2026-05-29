@@ -15,10 +15,23 @@ TELEGRAM_CHAT_ID   = os.getenv("TELEGRAM_CHAT_ID")
 PAPER_TRADING = True    # True = simula trades sin ejecutar órdenes reales
 USE_TESTNET   = False   # False = usa Mainnet para datos reales de mercado
 
-# ─── Universo de Trading ─────────────────────────────────────────────────────
-SYMBOLS = ['RENDERUSDT', 'TIAUSDT', 'FETUSDT', 'NEARUSDT', 'OCEANUSDT']
-ENTRY_SYMBOLS = ['RENDERUSDT', 'TIAUSDT', 'FETUSDT', 'NEARUSDT', 'OCEANUSDT']
-RELAXED_MACRO_SYMBOLS = ['RENDERUSDT', 'TIAUSDT', 'FETUSDT', 'NEARUSDT', 'OCEANUSDT']
+# ─── Universo de Trading (60 monedas) ─────────────────────────────────────────
+SYMBOLS = [
+    "BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT",
+    "DOGEUSDT", "ADAUSDT", "AVAXUSDT", "DOTUSDT", "LINKUSDT",
+    "MATICUSDT", "SHIBUSDT", "LTCUSDT", "UNIUSDT", "ATOMUSDT",
+    "NEARUSDT", "APTUSDT", "ARBUSDT", "OPUSDT", "SUIUSDT",
+    "FILUSDT", "AAVEUSDT", "INJUSDT", "RENDERUSDT", "FETUSDT",
+    "PEPEUSDT", "WIFUSDT", "FLOKIUSDT", "TRXUSDT", "ICPUSDT",
+    "BCHUSDT", "ETCUSDT", "STXUSDT", "IMXUSDT", "VETUSDT",
+    "THETAUSDT", "FTMUSDT", "ALGOUSDT", "SANDUSDT", "MANAUSDT",
+    "GALAUSDT", "EGLDUSDT", "AXSUSDT", "KASUSDT", "TONUSDT",
+    "SEIUSDT", "TIAUSDT", "TAOUSDT", "ORDIUSDT", "RUNEUSDT",
+    "ASTRUSDT", "AGIXUSDT", "OCEANUSDT", "ROSEUSDT", "CHZUSDT",
+    "QNTUSDT", "MKRUSDT", "SNXUSDT", "CRVUSDT", "LDOUSDT"
+]
+ENTRY_SYMBOLS = SYMBOLS.copy()
+RELAXED_MACRO_SYMBOLS = SYMBOLS.copy()
 
 # Reset estadístico — fecha de inicio de la estrategia Pullback Sniper
 STRATEGY_START_TIME = "2026-05-28T23:00:00"
@@ -42,19 +55,16 @@ CONSECUTIVE_LOSS_MAX = 3            # Tras 3 pérdidas consecutivas → pausa de
 # ─── Indicadores técnicos ────────────────────────────────────────────────────
 TIMEFRAME       = "1h"    # Temporalidad principal: 1 Hora
 KLINES_LIMIT    = 500     # 500 velas × 1h = 20.8 días (suficiente para EMA200)
-EMA_CORTO       = 20      # EMA rápida (pullback detection)
-EMA_LARGO       = 50      # EMA lenta (trend structure)
+EMA_CORTO       = 20      # EMA rápida
+EMA_LARGO       = 50      # EMA lenta
 RSI_PERIOD      = 14
-RSI_MIN         = 35      # Pullback zone: RSI bajo = dip en tendencia alcista
-RSI_MAX         = 55      # No comprar si RSI > 55 (ya subió demasiado)
 ATR_PERIOD      = 14
 ADX_PERIOD      = 14
 ADX_MIN         = 20      # Mínimo para confirmar que hay tendencia
 
-# ─── Stop Loss / Take Profit (FIJO — Sin Trailing) ──────────────────────────
-SL_ATR_MULT     = 1.5     # SL = entry - (1.5 × ATR)
-TP_ATR_MULT     = 4.5     # TP = entry + (4.5 × ATR) → R:R de 3:1
-MAX_SL_PCT      = 5.0     # Si SL natural > 5% del entry → rechazar trade (1H es más amplio)
+# ─── Stop Loss / Take Profit ────────────────────────────────────────────────
+SL_ATR_MULT     = 2.0     # SL = entry - (2.0 × ATR) para soportar el pánico
+MAX_SL_PCT      = 8.0     # Si SL natural > 8% del entry → rechazar trade (Pánico extremo)
 
 # ─── Comisiones y Retención ──────────────────────────────────────────────────
 TRADING_FEE_RATE = 0.001   # 0.1% por operación (Binance Spot estándar)
