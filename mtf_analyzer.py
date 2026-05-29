@@ -131,8 +131,8 @@ class MultiTimeframeAnalyzer:
             "adx": macro_conditions.get("adx"),
             "macd": macro_conditions.get("macd"),
         }
-        # Determinar score mínimo: Cazador de Anomalías tiene 4 condiciones base
-        effective_min_score = 3 if relaxed else 4
+        # Determinar score mínimo: Pullback Hunter necesita 3 de 5 condiciones base
+        effective_min_score = 3
         
         is_valid = combined_score >= effective_min_score
 

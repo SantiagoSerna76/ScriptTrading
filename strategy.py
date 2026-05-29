@@ -149,13 +149,14 @@ class StrategySignals:
 
     def check_buy_signal(self, df: pd.DataFrame) -> Tuple[bool, Dict]:
         """
-        Cazador de Anomalías: Mean Reversion en Tendencia Macro.
+        Pullback Hunter: Compra retrocesos en tendencias alcistas.
         
-        4 condiciones claras:
+        5 condiciones, necesita 3 para entrar:
         1. Precio > EMA200 (macro uptrend)
-        2. Precio < Banda Inferior de Bollinger o dentro del 0.5% (pánico / estirón)
-        3. RSI < 38 (sobreventa — zona de rebote)
-        4. ADX ≥ 18 (fuerza de tendencia, evita mercados muertos)
+        2. Precio dentro del 1.5% de la Lower Bollinger Band (pullback fuerte)
+        3. RSI < 45 (momentum bajando — zona de retroceso)
+        4. ADX ≥ 18 (hay tendencia real, no lateral)
+        5. Volumen > promedio (interés institucional en el retroceso)
         """
         if df is None or len(df) < 210:
             return False, {}
@@ -165,7 +166,7 @@ class StrategySignals:
         score   = 0
         details = {}
         
-        self.MIN_BUY_SCORE = 4  # 4 condiciones mandatorias
+        self.MIN_BUY_SCORE = 3  # Necesita 3 de 5 condiciones
 
         # ── 1. MACRO TREND: Precio > EMA200 ──────────────────────────────
         ema200 = last["ema200"]
@@ -175,20 +176,23 @@ class StrategySignals:
         if macro_bullish:
             score += 1
 
-        # ── 2. PANIC / ESTIRÓN: Precio cerca o debajo de Lower BB ────────
+        # ── 2. PULLBACK: Precio cerca de Lower Bollinger Band ────────────
         lower_bb = last["bb_lower"]
-        # Aceptar si precio está debajo de la banda O dentro del 0.5% de ella
-        bb_threshold = lower_bb * 1.005
-        panic_crash = last["close"] <= bb_threshold
-        details["panic_crash"] = panic_crash
+        bb_mid = last["bb_mid"]
+        bb_range = bb_mid - lower_bb if bb_mid > lower_bb else 1e-8
+        # Está en el 30% inferior de las bandas (cerca del lower)
+        bb_position = (last["close"] - lower_bb) / bb_range if bb_range > 0 else 0.5
+        pullback_ok = bb_position <= 0.35  # En el tercio inferior de las bandas
+        details["pullback_ok"] = pullback_ok
+        details["bb_position"] = round(bb_position, 3)
         details["lower_bb"] = round(lower_bb, 4)
-        if panic_crash:
+        if pullback_ok:
             score += 1
 
-        # ── 3. RSI SOBREVENTA: < 38 ──────────────────────────────────────
+        # ── 3. RSI RETROCESO: < 45 ───────────────────────────────────────
         rsi_val = round(last["rsi"], 2)
         details["rsi"] = rsi_val
-        rsi_ok = rsi_val < 38
+        rsi_ok = rsi_val < 45
         details["rsi_ok"] = rsi_ok
         if rsi_ok:
             score += 1
@@ -201,9 +205,15 @@ class StrategySignals:
         if adx_ok:
             score += 1
 
-        # ── Información adicional para logs ──────────────────────────────
-        vol_ok = last["volume"] > last["volume_sma"]
+        # ── 5. VOLUMEN: Spike de interés ─────────────────────────────────
+        vol_ratio = last["volume"] / last["volume_sma"] if last["volume_sma"] > 0 else 0
+        vol_ok = vol_ratio > 1.2  # 20% más volumen que el promedio
         details["volume_ok"] = vol_ok
+        details["vol_ratio"] = round(vol_ratio, 2)
+        if vol_ok:
+            score += 1
+
+        # ── Información adicional para logs ──────────────────────────────
         details["close_price"] = last["close"]
         details["score"] = score
         details["min_score"] = self.MIN_BUY_SCORE
