@@ -21,10 +21,12 @@ from config import (
     PAPER_TRADING, USE_TESTNET, TRADING_FEE_RATE, ADX_MIN,
     RELAXED_MACRO_SYMBOLS, ENTRY_SYMBOLS, PROXY_URL,
     BREAKEVEN_ATR_MULT, MAX_HOLD_HOURS, PAUSE_SIGNAL_FILE,
+    TRAILING_ACTIVATE_ATR, TRAILING_STEP_ATR, TRAILING_SL_OFFSET_ATR,
 )
 from binance_api import BinanceAPI, parse_klines_to_dataframe
 from strategy import StrategySignals
 from mtf_analyzer import MultiTimeframeAnalyzer
+from microstructure import OrderBookAnalyzer
 from database import TradeDatabase
 from notifier import TelegramNotifier
 import ml_features
@@ -65,6 +67,7 @@ class TradingBot:
         self.db       = TradeDatabase()
         self.mtf      = MultiTimeframeAnalyzer()
         self.notifier = TelegramNotifier()
+        self.ob_analyzer = OrderBookAnalyzer(API_KEY, SECRET_KEY, PROXY_URL)
 
         # Símbolos Activos y Hot-Swap
         self.symbols = SYMBOLS.copy()
@@ -306,32 +309,6 @@ class TradingBot:
             can_open_new = False
             logger.warning(f"🛑  Señal de pausa activa ({PAUSE_SIGNAL_FILE}). Solo se gestionan posiciones abiertas.")
 
-        # ── HOT-SWAP DYNAMIC CONFIG ──
-        try:
-            import json
-            dynamic_entry_raw = self.db.get_config_value("ENTRY_SYMBOLS")
-            dynamic_elite_raw = self.db.get_config_value("RELAXED_MACRO_SYMBOLS")
-            
-            if dynamic_entry_raw:
-                dynamic_entry = json.loads(dynamic_entry_raw)
-                if isinstance(dynamic_entry, list) and len(dynamic_entry) > 0:
-                    self.entry_symbols = dynamic_entry
-                    
-            if dynamic_elite_raw:
-                dynamic_elite = json.loads(dynamic_elite_raw)
-                if isinstance(dynamic_elite, list) and len(dynamic_elite) > 0:
-                    self.relaxed_symbols = dynamic_elite
-                    # Asegurar que las nuevas monedas estén en el universo general (symbols)
-                    for s in self.entry_symbols:
-                        if s not in self.symbols:
-                            self.symbols.append(s)
-                            if s not in self.trading_rules:
-                                rules = self.api.get_symbol_rules(s)
-                                self.trading_rules[s] = rules if rules else {"step_size": 0.01, "tick_size": 0.01, "min_notional": MIN_ORDER_NOTIONAL}
-                            if s not in self.last_buy_time:
-                                self.last_buy_time[s] = 0.0
-        except Exception as e:
-            logger.error(f"Error cargando config dinámica: {e}")
 
         for symbol in self.symbols:
             try:
@@ -388,16 +365,30 @@ class TradingBot:
         if symbol not in self.entry_symbols:
             return
 
-        # ── Check buy signal
+        # ── MTF FILTER: Validar macro 4H antes de permitir entrada ──
+        macro_ok = True
+        macro_details = {}
+        if klines_4h:
+            df_4h = parse_klines_to_dataframe(klines_4h)
+            macro_ok, macro_details = self.mtf.validate_entry_with_macro(df_4h)
+            if not macro_ok:
+                logger.info(
+                    f"{symbol} | MTF BLOQUEA entrada: "
+                    f"{macro_details.get('reason', 'Macro desfavorable')}"
+                )
+
+        # ── Check buy signal — solo si MTF valida
+        if not macro_ok:
+            return
+
         buy_signal, conds = self.strategy.check_buy_signal(df_main)
 
         logger.info(
             f"{symbol} | ${last_main['close']:.4f} | "
             f"RSI={conds.get('rsi', 0):.1f} | "
-            f"PanicDrop={conds.get('panic_drop', False)} | "
-            f"VolClimax={conds.get('vol_climax', False)} | "
             f"score={conds.get('score', 0)}/{conds.get('min_score', 3)} | "
-            f"{conds.get('regime', 'N/A')}"
+            f"{conds.get('regime', 'N/A')} | "
+            f"Macro={macro_details.get('reason', 'OK')}"
         )
 
         if buy_signal:
@@ -437,10 +428,26 @@ class TradingBot:
             return
 
         entry_price = df.iloc[-1]["close"]
-        sl, tp, atr = self.strategy.calculate_sl_tp(entry_price, df)
+
+        # ── Calcular SL/TP (6 valores ahora: sl, tp, atr, sl_mult, tp_mult, rr) ──
+        sl, tp, atr, sl_mult, tp_mult, rr = self.strategy.calculate_sl_tp(entry_price, df)
 
         if sl is None:
             logger.info(f"{symbol} | Trade RECHAZADO: volatilidad excesiva (SL > {MAX_SL_PCT}% del entry).")
+            return
+
+        # ── Order Book Validation (microestructura) ──
+        ob_ok, ob_details = self.ob_analyzer.pre_order_check(
+            symbol, entry_price, qty_rounded if 'qty_rounded' in locals() else self.capital_per_trade / entry_price,
+            side="BUY", sell_wall_threshold="MEDIUM"
+        )
+        if not ob_ok:
+            if ob_details.get("wall_rejection"):
+                logger.info(f"{symbol} | Order Book BLOQUEA entrada: sell wall detectado.")
+            elif not ob_details.get("liquidity_ok", True):
+                logger.info(f"{symbol} | Order Book BLOQUEA entrada: liquidez insuficiente.")
+            else:
+                logger.info(f"{symbol} | Order Book BLOQUEA entrada: {ob_details.get('reason', 'microestructura desfavorable')}")
             return
 
         # ── Position Sizing ───────────────────────────────────────────────────
@@ -473,6 +480,8 @@ class TradingBot:
         logger.info(f"    Take Profit : ${tp:.4f}  ({(tp/entry_price - 1)*100:+.2f}%)")
         logger.info(f"    Cantidad    : {qty_rounded:.6f}  (notional est. ${qty_rounded*entry_price:.2f})")
         logger.info(f"    ATR         : ${atr:.4f}")
+        logger.info(f"    R:R         : {rr:.2f}")
+        logger.info(f"    Order Book  : {ob_details.get('imbalance', {}).get('sentiment', 'N/A')}")
         logger.info(f"{'=' * 60}\n")
 
         if self.paper_trading:
@@ -495,9 +504,9 @@ class TradingBot:
             total_qty = sum(float(f["qty"]) for f in fills)
             if total_qty > 0:
                 entry_price = sum(float(f["price"]) * float(f["qty"]) for f in fills) / total_qty
-                sl_new, tp_new, atr = self.strategy.calculate_sl_tp(entry_price, df)
-                if sl_new is not None:
-                    sl, tp = sl_new, tp_new
+                sl, tp, atr, sl_mult, tp_mult, rr = self.strategy.calculate_sl_tp(entry_price, df)
+                if sl is not None:
+                    pass  # sl/tp already updated
                 if not self.paper_trading:
                     logger.info(f"✨ Precio real de entrada (fills): ${entry_price:.4f}. SL y TP recalculados.")
 
@@ -526,6 +535,8 @@ class TradingBot:
             "opened_at":       datetime.now(),
             "atr":             atr,
             "breakeven_active": False,
+            "trailing_active": False,
+            "trailing_max_price": entry_price,
         }
 
         self.last_buy_time[symbol] = time.time()
@@ -536,16 +547,19 @@ class TradingBot:
             f"SL: `${sl:.4f}` ({(sl/entry_price-1)*100:.1f}%)\n"
             f"TP: `${tp:.4f}` ({(tp/entry_price-1)*100:+.1f}%)\n"
             f"Score: `{conds.get('score', 0)}/{conds.get('min_score', 3)}`\n"
+            f"R:R: `{rr:.2f}`\n"
             f"Modo: {mode_tag.strip() or 'REAL'}"
         )
 
     def _check_exit(self, symbol: str, price: float, df):
         """
-        Momentum Dip Buyer Exit:
-        1. Take Profit fijo
-        2. Stop Loss fijo
-        3. Breakeven: después de +1 ATR, SL sube a entry
-        4. Time Stop: después de MAX_HOLD_HOURS, cerrar al mercado
+        Momentum Dip Buyer Exit v4.1:
+        1. Stop Loss fijo (protege a la baja)
+        2. Breakeven: después de +1.5 ATR, SL sube a entry
+        3. Trailing Stop Dinámico: después de +2.5 ATR, TP se vuelve trailing
+           → SL se mueve con el precio (trailingStep ATR) asegurando ganancias
+        4. Take Profit: solo se usa si NO hay trailing activo
+        5. Time Stop: después de MAX_HOLD_HOURS, cerrar al mercado
         """
         trade = self.open_trades[symbol]
         entry    = trade["entry_price"]
@@ -558,7 +572,7 @@ class TradingBot:
         if price > trade["max_price"]:
             trade["max_price"] = price
 
-        # ── Breakeven: si ganancia >= BREAKEVEN_ATR_MULT × ATR → SL sube a entry
+        # ── 1. Breakeven: si ganancia >= BREAKEVEN_ATR_MULT × ATR → SL sube a entry ──
         if atr > 0 and not trade.get("breakeven_active", False):
             breakeven_target = entry + (BREAKEVEN_ATR_MULT * atr)
             if price >= breakeven_target:
@@ -567,21 +581,56 @@ class TradingBot:
                 sl = entry
                 logger.info(f"🛡️  {symbol} | Breakeven activado: SL subido a ${entry:.4f}")
 
+        # ── 2. Trailing Stop Dinámico ──
+        if atr > 0:
+            trailing_active = trade.get("trailing_active", False)
+            trailing_max = trade.get("trailing_max_price", entry)
+
+            # Actualizar trailing max con el nuevo precio máximo
+            if price > trailing_max:
+                trailing_max = price
+                trade["trailing_max_price"] = trailing_max
+
+            # Activar trailing si el precio supera TP_ATR_MULT (ganancia suficiente)
+            if not trailing_active:
+                activate_level = entry + (TRAILING_ACTIVATE_ATR * atr)
+                if price >= activate_level:
+                    trade["trailing_active"] = True
+                    trailing_active = True
+                    # SL inicia en entry + 50% de la ganancia no realizada
+                    new_sl = max(sl, entry + (price - entry) * 0.5)
+                    trade["stop_loss"] = new_sl
+                    sl = new_sl
+                    logger.info(f"🔁  {symbol} | Trailing Stop ACTIVADO: SL=${sl:.4f} ({(sl/entry-1)*100:.2f}%)")
+                    # Quitar el TP fijo para que el trailing lo gestione
+                    tp = float('inf')
+
+            # Trailing activo: mover SL hacia arriba con el precio
+            if trailing_active:
+                # Calcular nuevo SL: se mantiene a TRAILING_SL_OFFSET_ATR ATRs debajo del máximo
+                target_sl = trailing_max - (TRAILING_SL_OFFSET_ATR * atr)
+                # Solo mover hacia arriba, nunca hacia abajo
+                if target_sl > sl:
+                    trade["stop_loss"] = target_sl
+                    sl = target_sl
+                    logger.info(f"🔝  {symbol} | SL trail: ${sl:.4f} ({(sl/entry-1)*100:.2f}%) max=${trailing_max:.4f}")
+
         exit_price  = None
         exit_reason = None
 
-        # 1. Take Profit
-        if price >= tp:
+        # 3. Stop Loss (protege siempre — tanto si hay trailing como si no)
+        if price <= sl:
+            exit_price  = price
+            be_tag = " (Breakeven)" if trade.get("breakeven_active") else ""
+            trail_tag = " [TRAIL]" if trade.get("trailing_active") else ""
+            exit_reason = f"🛑 Stop Loss ${sl:.4f}{be_tag}{trail_tag} ({(sl/entry-1)*100:.1f}%)"
+
+        # 4. Take Profit: solo si NO hay trailing activo
+        elif not trade.get("trailing_active", False) and price >= tp:
             exit_price  = price
             exit_reason = f"✅ Take Profit ${tp:.4f} (+{(tp/entry-1)*100:.1f}%)"
 
-        # 2. Stop Loss
-        elif price <= sl:
-            exit_price  = price
-            be_tag = " (Breakeven)" if trade.get("breakeven_active") else ""
-            exit_reason = f"🛑 Stop Loss ${sl:.4f}{be_tag} ({(sl/entry-1)*100:.1f}%)"
-
-        # 3. Time Stop
+        # 5. Time Stop
         elif "opened_at" in trade:
             hold_hours = (datetime.now() - trade["opened_at"]).total_seconds() / 3600
             if hold_hours >= MAX_HOLD_HOURS:
