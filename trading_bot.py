@@ -365,21 +365,15 @@ class TradingBot:
         if symbol not in self.entry_symbols:
             return
 
-        # ── MTF FILTER: Validar macro 4H antes de permitir entrada ──
-        macro_ok = True
-        macro_details = {}
+        # ── MTF FILTER: Solo informativo para log ──
+        macro_ctx = "OK"
         if klines_4h:
             df_4h = parse_klines_to_dataframe(klines_4h)
-            macro_ok, macro_details = self.mtf.validate_entry_with_macro(df_4h)
-            if not macro_ok:
-                logger.info(
-                    f"{symbol} | MTF BLOQUEA entrada: "
-                    f"{macro_details.get('reason', 'Macro desfavorable')}"
-                )
-
-        # ── Check buy signal — solo si MTF valida
-        if not macro_ok:
-            return
+            try:
+                macro_ctx = self.mtf.get_macro_context(df_4h)
+                logger.info(f"{symbol} | 4H: {macro_ctx}")
+            except Exception:
+                pass
 
         buy_signal, conds = self.strategy.check_buy_signal(df_main)
 
@@ -388,7 +382,7 @@ class TradingBot:
             f"RSI={conds.get('rsi', 0):.1f} | "
             f"score={conds.get('score', 0)}/{conds.get('min_score', 3)} | "
             f"{conds.get('regime', 'N/A')} | "
-            f"Macro={macro_details.get('reason', 'OK')}"
+            f"Macro={macro_ctx}"
         )
 
         if buy_signal:
