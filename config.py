@@ -36,7 +36,7 @@ STRATEGY_START_TIME = "2026-05-29T23:00:00"
 # ─── Capital y Riesgo ────────────────────────────────────────────────────────
 CAPITAL_TOTAL_USDT   = 500.0
 RIESGO_POR_TRADE     = 0.02    # 2% del capital por trade (se mantiene)
-MAX_OPEN_POSITIONS   = 3       # Cambiado a 3 para diversificar más
+MAX_OPEN_POSITIONS   = 5       # Permitir hasta 5 posiciones simultáneas ($100 c/u)
 MIN_ORDER_NOTIONAL   = 5.0
 
 # ─── Protección diaria ───────────────────────────────────────────────────────
