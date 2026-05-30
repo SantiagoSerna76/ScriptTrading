@@ -138,7 +138,7 @@ class Backtest:
                     exit_r = "Take Profit"
 
                 # 3. Time Stop
-                elif hold_time >= MAX_HOLD_HOURS:
+                elif hold_time >= (MAX_HOLD_HOURS * (60 / int(TIMEFRAME.replace('m', '')) if 'm' in TIMEFRAME else 1)):
                     exit_p = price
                     exit_r = "Time Stop"
 

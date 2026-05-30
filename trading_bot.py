@@ -343,16 +343,16 @@ class TradingBot:
     # ─────────────────────────────────────────────────────────────────────────
     def _analyze(self, symbol: str, can_open_new: bool = True):
         """Análisis por símbolo: entrada y salida."""
-        klines_1h = self.api.get_klines(symbol, TIMEFRAME, limit=KLINES_LIMIT)
+        klines_main = self.api.get_klines(symbol, TIMEFRAME, limit=KLINES_LIMIT)
         klines_4h = self.api.get_klines(symbol, "4h", limit=300)
 
-        if not klines_1h:
+        if not klines_main:
             logger.warning(f"Sin datos para {symbol}")
             return
 
-        df_1h = parse_klines_to_dataframe(klines_1h)
-        df_1h = self.strategy.calculate_indicators(df_1h)
-        last_1h = df_1h.iloc[-1]
+        df_main = parse_klines_to_dataframe(klines_main)
+        df_main = self.strategy.calculate_indicators(df_main)
+        last_main = df_main.iloc[-1]
 
         # Log macro context (informativo, no bloquea)
         if klines_4h:
@@ -363,20 +363,20 @@ class TradingBot:
         # Guardar indicadores en BD
         try:
             self.db.log_indicators(symbol, {
-                "ema_short":  last_1h["ema_short"],
-                "ema_long":   last_1h["ema_long"],
-                "rsi":        last_1h["rsi"],
-                "atr":        last_1h["atr"],
-                "adx":        last_1h["adx"],
-                "volume":     last_1h["volume"],
-                "volume_sma": last_1h["volume_sma"],
+                "ema_short":  last_main["ema_short"],
+                "ema_long":   last_main["ema_long"],
+                "rsi":        last_main["rsi"],
+                "atr":        last_main["atr"],
+                "adx":        last_main["adx"],
+                "volume":     last_main["volume"],
+                "volume_sma": last_main["volume_sma"],
             })
         except Exception:
             pass
 
         # ── Posición abierta → verificar salida
         if symbol in self.open_trades:
-            self._check_exit(symbol, last_1h["close"], df_1h)
+            self._check_exit(symbol, last_main["close"], df_main)
             return
 
         # ── Si no puede abrir nuevas → salir
@@ -388,19 +388,18 @@ class TradingBot:
             return
 
         # ── Check buy signal
-        buy_signal, conds = self.strategy.check_buy_signal(df_1h)
+        buy_signal, conds = self.strategy.check_buy_signal(df_main)
 
         logger.info(
-            f"{symbol} | ${last_1h['close']:.4f} | "
+            f"{symbol} | ${last_main['close']:.4f} | "
             f"RSI={conds.get('rsi', 0):.1f} | "
-            f"ADX={conds.get('adx', 0):.1f} | "
-            f"Dist EMA20={conds.get('dist_ema20', 99):.1f}% | "
-            f"score={conds.get('score', 0)}/{conds.get('min_score', 3)} | "
+            f"PanicDrop={conds.get('panic_drop', False)} | "
+            f"score={conds.get('score', 0)}/{conds.get('min_score', 2)} | "
             f"{conds.get('regime', 'N/A')}"
         )
 
         if buy_signal:
-            self._open_trade(symbol, df_1h, conds)
+            self._open_trade(symbol, df_main, conds)
 
     # ─────────────────────────────────────────────────────────────────────────
     # Abrir posición

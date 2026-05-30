@@ -53,8 +53,8 @@ SL_COOLDOWN_S        = 2 * 3600    # 2h de cooldown después de un Stop Loss (ba
 CONSECUTIVE_LOSS_MAX = 3            # Tras 3 pérdidas consecutivas → pausa de 4h
 
 # ─── Indicadores técnicos ────────────────────────────────────────────────────
-TIMEFRAME       = "1h"    # Temporalidad principal: 1 Hora
-KLINES_LIMIT    = 500     # 500 velas × 1h = ~20 días
+TIMEFRAME       = "15m"    # Temporalidad principal: 15 Minutos (Alto Win Rate + Frecuencia para ML)
+KLINES_LIMIT    = 500     # 500 velas × 15m = ~5 días
 EMA_CORTO       = 20      # EMA rápida (soporte dinámico del pullback)
 EMA_LARGO       = 50      # EMA lenta (confirmación de tendencia)
 RSI_PERIOD      = 14
@@ -75,7 +75,8 @@ MAX_SL_PCT = 4.5  # Modificado para permitir 3x ATR
 BREAKEVEN_ATR_MULT = 9.9
 
 # Límite máximo para retener un trade abierto antes de forzar cierre
-MAX_HOLD_HOURS = 8      # Si no toca TP ni SL en 12h → cerrar al mercado
+# Para Mean Reversion, a veces el precio consolida antes del rebote. 48h da suficiente aire.
+MAX_HOLD_HOURS = 48
 
 # ─── Comisiones ──────────────────────────────────────────────────────────────
 TRADING_FEE_RATE = 0.001   # 0.1% por operación (Binance Spot estándar)
