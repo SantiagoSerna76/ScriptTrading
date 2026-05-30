@@ -154,21 +154,27 @@ class StrategySignals:
         # Condición 2: Sobreventa (RSI < 35)
         oversold = rsi_val < 35
         
-        score = sum([panic_drop, oversold])
+        # Condición 3: Volumen de Capitulación (Volumen > 1.5x SMA)
+        vol = last.get("volume", 0)
+        vol_sma = last.get("volume_sma", 0)
+        vol_climax = vol > (vol_sma * 1.5) if vol_sma > 0 else False
+        
+        score = sum([panic_drop, oversold, vol_climax])
         
         details["close_price"] = close_price
         details["lower_bb"] = round(lower_bb, 4)
         details["rsi"] = round(rsi_val, 2)
         details["panic_drop"] = panic_drop
         details["oversold"] = oversold
+        details["vol_climax"] = vol_climax
         details["score"] = score
-        details["min_score"] = 2
+        details["min_score"] = 3
         
         regime_info = self.detect_market_regime(df)
         details["regime"] = regime_info["regime"]
         details["regime_desc"] = regime_info["reason"]
 
-        return score >= 2, details
+        return score >= 3, details
 
     def calculate_sl_tp(self, entry: float, df: pd.DataFrame):
         """

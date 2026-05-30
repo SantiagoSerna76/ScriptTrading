@@ -395,7 +395,8 @@ class TradingBot:
             f"{symbol} | ${last_main['close']:.4f} | "
             f"RSI={conds.get('rsi', 0):.1f} | "
             f"PanicDrop={conds.get('panic_drop', False)} | "
-            f"score={conds.get('score', 0)}/{conds.get('min_score', 2)} | "
+            f"VolClimax={conds.get('vol_climax', False)} | "
+            f"score={conds.get('score', 0)}/{conds.get('min_score', 3)} | "
             f"{conds.get('regime', 'N/A')}"
         )
 
