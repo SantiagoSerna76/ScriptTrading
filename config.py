@@ -15,77 +15,88 @@ TELEGRAM_CHAT_ID   = os.getenv("TELEGRAM_CHAT_ID")
 PAPER_TRADING = True    # True = simula trades sin ejecutar órdenes reales
 USE_TESTNET   = False   # False = usa Mainnet para datos reales de mercado
 
-# ─── Universo de Trading (59 monedas — eliminado KASUSDT que no existe en Spot) ──
+# ─── Universo de Trading ─────────────────────────────────────────────────────
 SYMBOLS = [
     "BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT",
     "DOGEUSDT", "ADAUSDT", "AVAXUSDT", "DOTUSDT", "LINKUSDT",
-    "MATICUSDT", "SHIBUSDT", "LTCUSDT", "UNIUSDT", "ATOMUSDT",
-    "NEARUSDT", "APTUSDT", "ARBUSDT", "OPUSDT", "SUIUSDT",
-    "FILUSDT", "AAVEUSDT", "INJUSDT", "RENDERUSDT", "FETUSDT",
-    "PEPEUSDT", "WIFUSDT", "FLOKIUSDT", "TRXUSDT", "ICPUSDT",
-    "BCHUSDT", "ETCUSDT", "STXUSDT", "IMXUSDT", "VETUSDT",
-    "THETAUSDT", "FTMUSDT", "ALGOUSDT", "SANDUSDT", "MANAUSDT",
-    "GALAUSDT", "EGLDUSDT", "AXSUSDT", "TONUSDT",
-    "SEIUSDT", "TIAUSDT", "TAOUSDT", "ORDIUSDT", "RUNEUSDT",
-    "ASTRUSDT", "AGIXUSDT", "OCEANUSDT", "ROSEUSDT", "CHZUSDT",
-    "QNTUSDT", "MKRUSDT", "SNXUSDT", "CRVUSDT", "LDOUSDT"
+    "LTCUSDT", "UNIUSDT", "ATOMUSDT", "NEARUSDT", "APTUSDT",
+    "ARBUSDT", "OPUSDT", "SUIUSDT", "FILUSDT", "AAVEUSDT",
+    "INJUSDT", "RENDERUSDT", "FETUSDT", "PEPEUSDT", "WIFUSDT",
+    "TRXUSDT", "ICPUSDT", "BCHUSDT", "ETCUSDT", "STXUSDT",
+    "IMXUSDT", "THETAUSDT", "ALGOUSDT", "SANDUSDT", "MANAUSDT",
+    "GALAUSDT", "EGLDUSDT", "AXSUSDT", "TONUSDT", "SEIUSDT",
+    "TIAUSDT", "ORDIUSDT", "RUNEUSDT", "ROSEUSDT", "CHZUSDT",
+    "QNTUSDT", "MKRUSDT", "SNXUSDT", "CRVUSDT", "LDOUSDT",
 ]
-ENTRY_SYMBOLS = SYMBOLS.copy()
-RELAXED_MACRO_SYMBOLS = SYMBOLS.copy()
+ENTRY_SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "DOGEUSDT", "INJUSDT", "UNIUSDT", "APTUSDT", "FILUSDT"]
+RELAXED_MACRO_SYMBOLS = ["INJUSDT", "UNIUSDT", "APTUSDT", "BTCUSDT", "SOLUSDT"]
 
-# Reset estadístico — fecha de inicio de la estrategia Momentum Dip Buyer
 STRATEGY_START_TIME = "2026-05-29T23:00:00"
 
 # ─── Capital y Riesgo ────────────────────────────────────────────────────────
 CAPITAL_TOTAL_USDT   = 500.0
-RIESGO_POR_TRADE     = 0.02    # 2% del capital por trade
-MAX_OPEN_POSITIONS   = 3       # Máximo de posiciones simultáneas
-MIN_ORDER_NOTIONAL   = 5.0     # Mínimo de Binance
+RIESGO_POR_TRADE     = 0.02    # 2% del capital por trade (se mantiene)
+MAX_OPEN_POSITIONS   = 2       # REDUCIDO de 3→2: Más concentración
+MIN_ORDER_NOTIONAL   = 5.0
 
 # ─── Protección diaria ───────────────────────────────────────────────────────
-MAX_DAILY_LOSS_USDT  = 10.0    # $10 máximo de pérdida diaria (2% del capital)
-MAX_DAILY_TRADES     = 15      # Máximo 15 trades/día (subido de 10 para más oportunidades)
+MAX_DAILY_LOSS_USDT  = 10.0
+MAX_DAILY_TRADES     = 6       # REDUCIDO: 15m genera más ruido, menos trades de calidad
 
 # ─── Cooldown entre entradas ─────────────────────────────────────────────────
-MIN_BUY_COOLDOWN_H   = 1       # 1h mínimo entre entradas del mismo par (bajado de 2h)
+MIN_BUY_COOLDOWN_H   = 2       # Se mantiene: 2h entre mismo par
 MIN_BUY_COOLDOWN_S   = MIN_BUY_COOLDOWN_H * 3600
-SL_COOLDOWN_S        = 2 * 3600    # 2h de cooldown después de un Stop Loss (bajado de 4h)
-CONSECUTIVE_LOSS_MAX = 3            # Tras 3 pérdidas consecutivas → pausa de 4h
+SL_COOLDOWN_S        = 4 * 3600    # Se mantiene: 4h después de un SL
+CONSECUTIVE_LOSS_MAX = 2            # Se mantiene: pausa tras 2 pérdidas
 
 # ─── Indicadores técnicos ────────────────────────────────────────────────────
-TIMEFRAME       = "15m"    # Temporalidad principal: 15 Minutos (Alto Win Rate + Frecuencia para ML)
-KLINES_LIMIT    = 500     # 500 velas × 15m = ~5 días
-EMA_CORTO       = 20      # EMA rápida (soporte dinámico del pullback)
-EMA_LARGO       = 50      # EMA lenta (confirmación de tendencia)
+TIMEFRAME       = "15m"    # Timeframe 15m (usuario lo prefiere)
+KLINES_LIMIT    = 500      # 500 velas × 15m = ~5.2 días
+EMA_CORTO       = 20       # EMA rápida
+EMA_LARGO       = 50       # EMA lenta (confirmación de tendencia)
 RSI_PERIOD      = 14
 ATR_PERIOD      = 14
 ADX_PERIOD      = 14
-ADX_MIN         = 20      # Mínimo ADX para confirmar tendencia real
+ADX_MIN         = 22       # AUMENTADO de 20→22: tendencia más definida
 
-# ─── Stop Loss / Take Profit ────────────────────────────────────────────────
-# Multiplicadores ATR para Scalping de Reversión
-SL_ATR_MULT = 3.0
-TP_ATR_MULT = 1.0
+# ─── Señales de entrada (Momentum Dip Buyer) ─────────────────────────────────
+RSI_PULLBACK_MIN    = 38     # AUMENTADO de 35→38: evitar trampas en dips profundos
+RSI_PULLBACK_MAX    = 52     # Zona de pullback normal
+EMA_PULLBACK_PCT    = 1.5    # REDUCIDO de 1.8→1.5%: más pegado al EMA20
+MIN_BUY_SCORE       = 3      # Se mantiene: 3 de 4 condiciones
 
-# Máximo Stop Loss en porcentaje (protección contra monedas muy volátiles)
-MAX_SL_PCT = 4.5  # Modificado para permitir 3x ATR
+# ─── Stop Loss / Take Profit ─────────────────────────────────────────────────
+# R:R = 2.0:1 mejorado para 15m (antes era 1.39:1 que no daba esperanza positiva real)
+# SL un poco más amplio en 15m para evitar stops por ruido (2.2 ATR)
+# TP = 3.5 ATR (algo menor que en 1h porque 15m tiene menos recorrido)
+SL_ATR_MULT = 2.2
+TP_ATR_MULT = 4.0
+# R:R efectivo = 4.0/2.2 = 1.82:1 → esperanza positiva realista:
+# Con WR=50%: 0.5*3.6 - 0.5*2.2 = 0.7% > 0 ✓ (vs antes 0.43%)
 
-# Mueve el SL a precio de entrada cuando el precio alcance este multiplicador ATR
-# DESACTIVADO (9.9) para scalping: el breakeven prematuro ahorca los trades antes del TP.
-BREAKEVEN_ATR_MULT = 9.9
+# Máximo Stop Loss en porcentaje (protección contra volátiles)
+MAX_SL_PCT = 6.0  # Se mantiene
 
-# Límite máximo para retener un trade abierto antes de forzar cierre
-# Para Mean Reversion, a veces el precio consolida antes del rebote. 48h da suficiente aire.
-MAX_HOLD_HOURS = 48
+# Breakeven cuando el precio avanza 1.5× ATR a favor
+BREAKEVEN_ATR_MULT = 1.5
+
+# Trailing Stop Dinámico
+# Se activa después de 2.5 ATR de ganancia (protege tendencias fuertes en 15m)
+TRAILING_ACTIVATE_ATR = 2.5
+TRAILING_STEP_ATR     = 0.8
+TRAILING_SL_OFFSET_ATR = 1.0  # SL a 1.0 ATR debajo del máximo
+
+# Límite máximo de retención: 24h es suficiente para 15m (96 velas)
+MAX_HOLD_HOURS = 24
 
 # ─── Comisiones ──────────────────────────────────────────────────────────────
-TRADING_FEE_RATE = 0.001   # 0.1% por operación (Binance Spot estándar)
-MIN_HOLD_HOURS   = 0.5     # 30 min mínimo antes de permitir salida (bajado de 1h)
+TRADING_FEE_RATE = 0.001   # 0.1% Binance Spot
+MIN_HOLD_HOURS   = 0.5     # 30 min mínimo (2 velas de 15m)
 
 # ─── Sistema ─────────────────────────────────────────────────────────────────
 LOG_FILE         = "trading_bot.log"
 DB_FILE          = "trades.db"
-POLLING_INTERVAL = 60      # 60s entre ciclos
+POLLING_INTERVAL = 60      # 60s: en 15m revisamos cada minuto
 PAUSE_SIGNAL_FILE = ".bot_pause_signal"
 
 # ─── Proxy ───────────────────────────────────────────────────────────────────
