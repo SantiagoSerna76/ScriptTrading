@@ -12,7 +12,7 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID   = os.getenv("TELEGRAM_CHAT_ID")
 
 # ─── Modo de Operación ───────────────────────────────────────────────────────
-PAPER_TRADING = False   # False = OPERANDO EN REAL CON DINERO
+PAPER_TRADING = True    # True = simula trades sin ejecutar órdenes reales
 USE_TESTNET   = False   # False = usa Mainnet para datos reales de mercado
 
 # ─── Universo de Trading ─────────────────────────────────────────────────────
