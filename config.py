@@ -12,7 +12,7 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID   = os.getenv("TELEGRAM_CHAT_ID")
 
 # ─── Modo de Operación ───────────────────────────────────────────────────────
-PAPER_TRADING = True    # True = simula trades sin ejecutar órdenes reales
+PAPER_TRADING = False   # False = OPERANDO EN REAL CON DINERO
 USE_TESTNET   = False   # False = usa Mainnet para datos reales de mercado
 
 # ─── Universo de Trading ─────────────────────────────────────────────────────
@@ -28,8 +28,8 @@ SYMBOLS = [
     "TIAUSDT", "ORDIUSDT", "RUNEUSDT", "ROSEUSDT", "CHZUSDT",
     "QNTUSDT", "MKRUSDT", "SNXUSDT", "CRVUSDT", "LDOUSDT",
 ]
-ENTRY_SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "DOGEUSDT", "INJUSDT", "UNIUSDT", "APTUSDT", "FILUSDT"]
-RELAXED_MACRO_SYMBOLS = ["INJUSDT", "UNIUSDT", "APTUSDT", "BTCUSDT", "SOLUSDT"]
+ENTRY_SYMBOLS = SYMBOLS
+RELAXED_MACRO_SYMBOLS = SYMBOLS
 
 STRATEGY_START_TIME = "2026-05-29T23:00:00"
 
@@ -41,7 +41,7 @@ MIN_ORDER_NOTIONAL   = 5.0
 
 # ─── Protección diaria ───────────────────────────────────────────────────────
 MAX_DAILY_LOSS_USDT  = 10.0
-MAX_DAILY_TRADES     = 6       # REDUCIDO: 15m genera más ruido, menos trades de calidad
+MAX_DAILY_TRADES     = 10       # Permitir más trades para 60 monedas
 
 # ─── Cooldown entre entradas ─────────────────────────────────────────────────
 MIN_BUY_COOLDOWN_H   = 2       # Se mantiene: 2h entre mismo par
@@ -50,8 +50,8 @@ SL_COOLDOWN_S        = 4 * 3600    # Se mantiene: 4h después de un SL
 CONSECUTIVE_LOSS_MAX = 2            # Se mantiene: pausa tras 2 pérdidas
 
 # ─── Indicadores técnicos ────────────────────────────────────────────────────
-TIMEFRAME       = "15m"    # Timeframe 15m (usuario lo prefiere)
-KLINES_LIMIT    = 500      # 500 velas × 15m = ~5.2 días
+TIMEFRAME       = "1h"     # Trend Following en 1H
+KLINES_LIMIT    = 500      # 500 velas × 1h = ~20 días
 EMA_CORTO       = 20       # EMA rápida
 EMA_LARGO       = 50       # EMA lenta (confirmación de tendencia)
 RSI_PERIOD      = 14
@@ -66,12 +66,10 @@ EMA_PULLBACK_PCT    = 1.5    # REDUCIDO de 1.8→1.5%: más pegado al EMA20
 MIN_BUY_SCORE       = 3      # Se mantiene: 3 de 4 condiciones
 
 # ─── Stop Loss / Take Profit ─────────────────────────────────────────────────
-# R:R = 2.0:1 mejorado para 15m (antes era 1.39:1 que no daba esperanza positiva real)
-# SL un poco más amplio en 15m para evitar stops por ruido (2.2 ATR)
-# TP = 3.5 ATR (algo menor que en 1h porque 15m tiene menos recorrido)
-SL_ATR_MULT = 2.2
-TP_ATR_MULT = 4.0
-# R:R efectivo = 4.0/2.2 = 1.82:1 → esperanza positiva realista:
+# R:R optimizado matemáticamente para Estrategia de Tendencia en 1H
+SL_ATR_MULT = 2.0
+TP_ATR_MULT = 3.0
+# R:R efectivo = 3.0/2.0 = 1.5:1
 # Con WR=50%: 0.5*3.6 - 0.5*2.2 = 0.7% > 0 ✓ (vs antes 0.43%)
 
 # Máximo Stop Loss en porcentaje (protección contra volátiles)
