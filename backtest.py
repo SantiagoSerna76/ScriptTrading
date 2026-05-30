@@ -112,17 +112,19 @@ class Backtest:
                 if price > position["max"]:
                     position["max"] = price
 
-                # Breakeven: si ganancia >= 1 ATR → SL sube a entry
+                # Breakeven: si ganancia >= BREAKEVEN_ATR_MULT ATR → SL sube a entry
                 atr = position.get("atr", 0)
+                from config import BREAKEVEN_ATR_MULT, MAX_HOLD_HOURS
+                low = current["low"]
+                high = current["high"]
                 if atr > 0 and not position["breakeven_active"]:
-                    if price >= position["entry"] + atr:
+                    # Evaluamos con el 'high' de la vela para capturar breakeven intradía
+                    if high >= position["entry"] + (BREAKEVEN_ATR_MULT * atr):
                         position["sl"] = position["entry"]
                         position["breakeven_active"] = True
 
                 exit_p, exit_r = None, None
                 hold_time = idx - position["entry_idx"]
-                low = current["low"]
-                high = current["high"]
 
                 # 1. Stop Loss (check candle low)
                 if low <= position["sl"]:
@@ -135,8 +137,8 @@ class Backtest:
                     exit_p = position["tp"]
                     exit_r = "Take Profit"
 
-                # 3. Time Stop (12h = 12 velas en 1H)
-                elif hold_time >= 12:
+                # 3. Time Stop
+                elif hold_time >= MAX_HOLD_HOURS:
                     exit_p = price
                     exit_r = "Time Stop"
 

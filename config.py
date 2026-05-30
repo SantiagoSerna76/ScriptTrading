@@ -63,11 +63,19 @@ ADX_PERIOD      = 14
 ADX_MIN         = 20      # Mínimo ADX para confirmar tendencia real
 
 # ─── Stop Loss / Take Profit ────────────────────────────────────────────────
-SL_ATR_MULT     = 1.5     # SL = entry - (1.5 × ATR) — ajustado para R:R favorable
-TP_ATR_MULT     = 2.0     # TP = entry + (2.0 × ATR) — R:R = 1:1.33
-MAX_SL_PCT      = 3.0     # Si SL natural > 3% del entry → rechazar (muy volátil)
-BREAKEVEN_ATR_MULT = 1.0  # Después de +1.0 ATR de ganancia → SL sube a entry
-MAX_HOLD_HOURS  = 12      # Si no toca TP ni SL en 12h → cerrar al mercado
+# Multiplicadores ATR para Scalping de Reversión
+SL_ATR_MULT = 3.0
+TP_ATR_MULT = 1.0
+
+# Máximo Stop Loss en porcentaje (protección contra monedas muy volátiles)
+MAX_SL_PCT = 4.5  # Modificado para permitir 3x ATR
+
+# Mueve el SL a precio de entrada cuando el precio alcance este multiplicador ATR
+# DESACTIVADO (9.9) para scalping: el breakeven prematuro ahorca los trades antes del TP.
+BREAKEVEN_ATR_MULT = 9.9
+
+# Límite máximo para retener un trade abierto antes de forzar cierre
+MAX_HOLD_HOURS = 8      # Si no toca TP ni SL en 12h → cerrar al mercado
 
 # ─── Comisiones ──────────────────────────────────────────────────────────────
 TRADING_FEE_RATE = 0.001   # 0.1% por operación (Binance Spot estándar)

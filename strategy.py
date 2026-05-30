@@ -103,7 +103,7 @@ class StrategySignals:
         df["atr"]        = ti.atr(df, ATR_PERIOD)
         df["adx"]        = ti.adx(df, ADX_PERIOD)
         df["volume_sma"] = ti.sma(df["volume"], 20)
-        df["bb_mid"], df["bb_upper"], df["bb_lower"] = ti.bollinger_bands(df["close"])
+        df["bb_mid"], df["bb_upper"], df["bb_lower"] = ti.bollinger_bands(df["close"], std_dev=2.5)
         return df
 
     def detect_market_regime(self, df: pd.DataFrame) -> Dict:
@@ -133,61 +133,40 @@ class StrategySignals:
 
     def check_buy_signal(self, df: pd.DataFrame) -> Tuple[bool, Dict]:
         """
-        Momentum Dip Buyer: 4 condiciones, necesita 3.
-
-        1. Precio > EMA50 (uptrend confirmado)
-        2. Pullback a EMA20: precio dentro del 1.5% de EMA20 o debajo
-        3. RSI entre 35-50 (zona de retroceso — ni pánico ni sobrecompra)
-        4. ADX >= 20 (hay tendencia real)
+        Mean Reversion Scalper: Compra en Pánico Extremo
+        Condiciones:
+        1. Precio cruza por debajo de la Banda de Bollinger Inferior
+        2. RSI < 35 (Sobreventa Extrema)
         """
         if df is None or len(df) < 60:
             return False, {}
 
         last = df.iloc[-1]
-        score   = 0
         details = {}
 
-        # ── 1. UPTREND: Precio > EMA50 (Obligatorio) ──────────────────────
-        ema50 = last["ema_long"]
-        uptrend = last["close"] > ema50
-        details["uptrend"] = uptrend
-        details["ema50"] = round(ema50, 4)
-
-        # ── 2. PULLBACK a EMA20: precio cerca o debajo ───────────────────
-        ema20 = last["ema_short"]
-        distance_to_ema20 = (last["close"] - ema20) / ema20 * 100 if ema20 > 0 else 999
-        # Pullback = precio dentro del 1.5% por encima de EMA20, o debajo de ella
-        pullback = distance_to_ema20 <= 1.5
-        details["pullback"] = pullback
-        details["ema20"] = round(ema20, 4)
-        details["dist_ema20"] = round(distance_to_ema20, 2)
-
-        # ── 3. RSI RETROCESO: entre 35-50 ────────────────────────────────
-        rsi_val = round(last["rsi"], 2)
-        details["rsi"] = rsi_val
-        rsi_ok = 35 <= rsi_val <= 50
-        details["rsi_ok"] = rsi_ok
-
-        # ── 4. ADX >= 20: Tendencia real ──────────────────────────────────
-        adx_val = round(last["adx"], 2)
-        details["adx"] = adx_val
-        adx_ok = adx_val >= ADX_MIN
-        details["adx_ok"] = adx_ok
-
-        # ── Score (Calculado sobre los 3 filtros secundarios) ─────────────
-        score = sum([pullback, rsi_ok, adx_ok])
+        close_price = last["close"]
+        lower_bb = last.get("bb_lower", 0)
+        rsi_val = last.get("rsi", 50)
         
-        details["close_price"] = last["close"]
+        # Condición 1: Pánico (Precio < Lower BB)
+        panic_drop = close_price < lower_bb
+        
+        # Condición 2: Sobreventa (RSI < 35)
+        oversold = rsi_val < 35
+        
+        score = sum([panic_drop, oversold])
+        
+        details["close_price"] = close_price
+        details["lower_bb"] = round(lower_bb, 4)
+        details["rsi"] = round(rsi_val, 2)
+        details["panic_drop"] = panic_drop
+        details["oversold"] = oversold
         details["score"] = score
-        details["min_score"] = 2  # Necesita 2 de 3 condiciones extras
-
+        details["min_score"] = 2
+        
         regime_info = self.detect_market_regime(df)
         details["regime"] = regime_info["regime"]
         details["regime_desc"] = regime_info["reason"]
-
-        # Condición estricta: Si no hay tendencia alcista, el trade se rechaza.
-        if not uptrend:
-            return False, details
 
         return score >= 2, details
 
