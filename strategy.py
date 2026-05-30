@@ -147,13 +147,11 @@ class StrategySignals:
         score   = 0
         details = {}
 
-        # ── 1. UPTREND: Precio > EMA50 ───────────────────────────────────
+        # ── 1. UPTREND: Precio > EMA50 (Obligatorio) ──────────────────────
         ema50 = last["ema_long"]
         uptrend = last["close"] > ema50
         details["uptrend"] = uptrend
         details["ema50"] = round(ema50, 4)
-        if uptrend:
-            score += 1
 
         # ── 2. PULLBACK a EMA20: precio cerca o debajo ───────────────────
         ema20 = last["ema_short"]
@@ -163,35 +161,35 @@ class StrategySignals:
         details["pullback"] = pullback
         details["ema20"] = round(ema20, 4)
         details["dist_ema20"] = round(distance_to_ema20, 2)
-        if pullback:
-            score += 1
 
         # ── 3. RSI RETROCESO: entre 35-50 ────────────────────────────────
         rsi_val = round(last["rsi"], 2)
         details["rsi"] = rsi_val
         rsi_ok = 35 <= rsi_val <= 50
         details["rsi_ok"] = rsi_ok
-        if rsi_ok:
-            score += 1
 
         # ── 4. ADX >= 20: Tendencia real ──────────────────────────────────
         adx_val = round(last["adx"], 2)
         details["adx"] = adx_val
         adx_ok = adx_val >= ADX_MIN
         details["adx_ok"] = adx_ok
-        if adx_ok:
-            score += 1
 
-        # ── Info adicional ────────────────────────────────────────────────
+        # ── Score (Calculado sobre los 3 filtros secundarios) ─────────────
+        score = sum([pullback, rsi_ok, adx_ok])
+        
         details["close_price"] = last["close"]
         details["score"] = score
-        details["min_score"] = self.MIN_BUY_SCORE
+        details["min_score"] = 2  # Necesita 2 de 3 condiciones extras
 
         regime_info = self.detect_market_regime(df)
         details["regime"] = regime_info["regime"]
         details["regime_desc"] = regime_info["reason"]
 
-        return score >= self.MIN_BUY_SCORE, details
+        # Condición estricta: Si no hay tendencia alcista, el trade se rechaza.
+        if not uptrend:
+            return False, details
+
+        return score >= 2, details
 
     def calculate_sl_tp(self, entry: float, df: pd.DataFrame):
         """
