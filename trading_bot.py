@@ -27,6 +27,7 @@ from strategy import StrategySignals
 from mtf_analyzer import MultiTimeframeAnalyzer
 from database import TradeDatabase
 from notifier import TelegramNotifier
+import ml_features
 
 # ── Ajuste de Codificación Consola (Windows) ──────────────────────────────────
 if sys.platform.startswith("win"):
@@ -508,6 +509,11 @@ class TradingBot:
             stop_loss=sl, take_profit=tp,
             reason=f"{mode_tag}Score {conds.get('score')}/{conds.get('min_score', 3)} | {conds.get('regime', 'N/A')}",
         )
+
+        if trade_id > 0:
+            features = ml_features.extract_features(df)
+            if features:
+                self.db.save_entry_features(trade_id, list(features.values()), list(features.keys()))
 
         self.open_trades[symbol] = {
             "trade_id":        trade_id,
