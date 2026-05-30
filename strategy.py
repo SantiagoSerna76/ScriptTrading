@@ -1,9 +1,9 @@
 """
-Pullback Sniper Strategy — v2.0
-================================
-Compra pullbacks en tendencias alcistas confirmadas.
-Solo 5 condiciones de entrada, 2 salidas fijas (SL/TP).
-Sin trailing stop. Sin ventas parciales. Sin breakeven.
+Momentum Dip Buyer Strategy — v3.0
+====================================
+Compra pullbacks (retrocesos) a la EMA20 en tendencias alcistas confirmadas.
+4 condiciones de entrada, necesita 3.
+Salidas con SL/TP fijos basados en ATR + breakeven automático.
 """
 import logging
 import pandas as pd
@@ -11,8 +11,8 @@ import numpy as np
 from typing import Dict, Tuple
 from config import (
     EMA_CORTO, EMA_LARGO, RSI_PERIOD,
-    ATR_PERIOD, ADX_PERIOD, ADX_MIN, SL_ATR_MULT,
-    MAX_SL_PCT,
+    ATR_PERIOD, ADX_PERIOD, ADX_MIN,
+    SL_ATR_MULT, TP_ATR_MULT, MAX_SL_PCT,
 )
 
 logger = logging.getLogger(__name__)
@@ -78,28 +78,27 @@ class TechnicalIndicators:
 
 class StrategySignals:
     """
-    Pullback Sniper: Compra retrocesos en tendencias alcistas.
-    
-    5 condiciones de entrada (todas obligatorias):
-    1. Precio > EMA200 (macro uptrend)
-    2. EMA20 > EMA50 (estructura de tendencia local)  
-    3. Pullback: precio cerca de EMA20 (retroceso, no breakout)
-    4. RSI en zona 35-55 (dip, no sobrecompra)
-    5. ADX >= 20 (tendencia real, no lateralización)
+    Momentum Dip Buyer: Compra retrocesos a la EMA20 en tendencias alcistas.
+
+    4 condiciones de entrada (necesita 3):
+    1. Precio > EMA50 (tendencia alcista confirmada)
+    2. Precio cerca de EMA20 (pullback al soporte dinámico)
+    3. RSI entre 35-50 (retroceso, no pánico ni sobrecompra)
+    4. ADX >= 20 (tendencia real, no lateral)
     """
 
-    MIN_BUY_SCORE = 5   # 5 condiciones, todas requeridas
+    MIN_BUY_SCORE = 3   # 3 de 4 condiciones requeridas
 
     def __init__(self):
         self.ti = TechnicalIndicators()
 
     def calculate_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Calcula indicadores para Mean Reversion en Tendencia."""
+        """Calcula todos los indicadores necesarios."""
         df = df.copy()
         ti = self.ti
-        df["ema_short"]  = ti.ema(df["close"], EMA_CORTO)
-        df["ema_long"]   = ti.ema(df["close"], EMA_LARGO)
-        df["ema200"]     = ti.ema(df["close"], 200)
+        df["ema_short"]  = ti.ema(df["close"], EMA_CORTO)     # EMA 20
+        df["ema_long"]   = ti.ema(df["close"], EMA_LARGO)      # EMA 50
+        df["ema200"]     = ti.ema(df["close"], 200)             # EMA 200 (solo para logs/macro)
         df["rsi"]        = ti.rsi(df["close"], RSI_PERIOD)
         df["atr"]        = ti.atr(df, ATR_PERIOD)
         df["adx"]        = ti.adx(df, ADX_PERIOD)
@@ -108,39 +107,24 @@ class StrategySignals:
         return df
 
     def detect_market_regime(self, df: pd.DataFrame) -> Dict:
-        """
-        Régimen simplificado: TREND o NO_TRADE.
-        Solo 2 estados en lugar de 5.
-        """
+        """Régimen simplificado: TREND o NO_TRADE."""
         if df is None or len(df) < 30:
-            return {
-                "regime": "UNKNOWN",
-                "adx": 0.0,
-                "reason": "Datos insuficientes"
-            }
-            
+            return {"regime": "UNKNOWN", "adx": 0.0, "reason": "Datos insuficientes"}
+
         last = df.iloc[-1]
         adx_val = last.get("adx", 0.0)
         close = last["close"]
-        ema200 = last.get("ema200", close)
-        ema20 = last.get("ema_short", close)
         ema50 = last.get("ema_long", close)
 
-        if adx_val >= ADX_MIN and close > ema200 and ema20 > ema50:
-            regime = "TREND"
-            reason = f"Tendencia alcista confirmada (ADX={adx_val:.1f})"
-        elif adx_val >= ADX_MIN and close > ema200:
-            regime = "TREND_WEAK"
-            reason = f"Tendencia débil (ADX={adx_val:.1f}, EMAs no alineadas)"
+        if adx_val >= ADX_MIN and close > ema50:
+            return {"regime": "TREND", "adx": adx_val,
+                    "reason": f"Tendencia alcista (ADX={adx_val:.1f})"}
+        elif adx_val >= ADX_MIN:
+            return {"regime": "TREND_WEAK", "adx": adx_val,
+                    "reason": f"Tendencia sin dirección clara (ADX={adx_val:.1f})"}
         else:
-            regime = "NO_TRADE"
-            reason = f"Sin tendencia clara (ADX={adx_val:.1f})"
-            
-        return {
-            "regime": regime,
-            "adx": adx_val,
-            "reason": reason
-        }
+            return {"regime": "NO_TRADE", "adx": adx_val,
+                    "reason": f"Sin tendencia (ADX={adx_val:.1f})"}
 
     @staticmethod
     def get_position_size_multiplier(regime: str) -> float:
@@ -149,71 +133,56 @@ class StrategySignals:
 
     def check_buy_signal(self, df: pd.DataFrame) -> Tuple[bool, Dict]:
         """
-        Pullback Hunter: Compra retrocesos en tendencias alcistas.
-        
-        5 condiciones, necesita 3 para entrar:
-        1. Precio > EMA200 (macro uptrend)
-        2. Precio dentro del 1.5% de la Lower Bollinger Band (pullback fuerte)
-        3. RSI < 45 (momentum bajando — zona de retroceso)
-        4. ADX ≥ 18 (hay tendencia real, no lateral)
-        5. Volumen > promedio (interés institucional en el retroceso)
+        Momentum Dip Buyer: 4 condiciones, necesita 3.
+
+        1. Precio > EMA50 (uptrend confirmado)
+        2. Pullback a EMA20: precio dentro del 1.5% de EMA20 o debajo
+        3. RSI entre 35-50 (zona de retroceso — ni pánico ni sobrecompra)
+        4. ADX >= 20 (hay tendencia real)
         """
-        if df is None or len(df) < 210:
+        if df is None or len(df) < 60:
             return False, {}
 
         last = df.iloc[-1]
-
         score   = 0
         details = {}
-        
-        self.MIN_BUY_SCORE = 3  # Necesita 3 de 5 condiciones
 
-        # ── 1. MACRO TREND: Precio > EMA200 ──────────────────────────────
-        ema200 = last["ema200"]
-        macro_bullish = last["close"] > ema200
-        details["macro_bullish"] = macro_bullish
-        details["ema200"] = round(ema200, 4)
-        if macro_bullish:
+        # ── 1. UPTREND: Precio > EMA50 ───────────────────────────────────
+        ema50 = last["ema_long"]
+        uptrend = last["close"] > ema50
+        details["uptrend"] = uptrend
+        details["ema50"] = round(ema50, 4)
+        if uptrend:
             score += 1
 
-        # ── 2. PULLBACK: Precio cerca de Lower Bollinger Band ────────────
-        lower_bb = last["bb_lower"]
-        bb_mid = last["bb_mid"]
-        bb_range = bb_mid - lower_bb if bb_mid > lower_bb else 1e-8
-        # Está en el 30% inferior de las bandas (cerca del lower)
-        bb_position = (last["close"] - lower_bb) / bb_range if bb_range > 0 else 0.5
-        pullback_ok = bb_position <= 0.35  # En el tercio inferior de las bandas
-        details["pullback_ok"] = pullback_ok
-        details["bb_position"] = round(bb_position, 3)
-        details["lower_bb"] = round(lower_bb, 4)
-        if pullback_ok:
+        # ── 2. PULLBACK a EMA20: precio cerca o debajo ───────────────────
+        ema20 = last["ema_short"]
+        distance_to_ema20 = (last["close"] - ema20) / ema20 * 100 if ema20 > 0 else 999
+        # Pullback = precio dentro del 1.5% por encima de EMA20, o debajo de ella
+        pullback = distance_to_ema20 <= 1.5
+        details["pullback"] = pullback
+        details["ema20"] = round(ema20, 4)
+        details["dist_ema20"] = round(distance_to_ema20, 2)
+        if pullback:
             score += 1
 
-        # ── 3. RSI RETROCESO: < 45 ───────────────────────────────────────
+        # ── 3. RSI RETROCESO: entre 35-50 ────────────────────────────────
         rsi_val = round(last["rsi"], 2)
         details["rsi"] = rsi_val
-        rsi_ok = rsi_val < 45
+        rsi_ok = 35 <= rsi_val <= 50
         details["rsi_ok"] = rsi_ok
         if rsi_ok:
             score += 1
 
-        # ── 4. ADX ≥ 18: Tendencia real ──────────────────────────────────
+        # ── 4. ADX >= 20: Tendencia real ──────────────────────────────────
         adx_val = round(last["adx"], 2)
         details["adx"] = adx_val
-        adx_ok = adx_val >= 18
+        adx_ok = adx_val >= ADX_MIN
         details["adx_ok"] = adx_ok
         if adx_ok:
             score += 1
 
-        # ── 5. VOLUMEN: Spike de interés ─────────────────────────────────
-        vol_ratio = last["volume"] / last["volume_sma"] if last["volume_sma"] > 0 else 0
-        vol_ok = vol_ratio > 1.2  # 20% más volumen que el promedio
-        details["volume_ok"] = vol_ok
-        details["vol_ratio"] = round(vol_ratio, 2)
-        if vol_ok:
-            score += 1
-
-        # ── Información adicional para logs ──────────────────────────────
+        # ── Info adicional ────────────────────────────────────────────────
         details["close_price"] = last["close"]
         details["score"] = score
         details["min_score"] = self.MIN_BUY_SCORE
@@ -226,47 +195,31 @@ class StrategySignals:
 
     def calculate_sl_tp(self, entry: float, df: pd.DataFrame):
         """
-        SL basado en ATR (2.0x).
-        TP dinámico basado en la media de reversión (Bollinger Middle Band / SMA 20).
+        SL y TP basados en ATR (configurables desde config.py).
+        - SL = entry - SL_ATR_MULT × ATR
+        - TP = entry + TP_ATR_MULT × ATR
+        - R:R = TP_ATR_MULT / SL_ATR_MULT = 2.0/1.5 = 1.33
         """
         last_row = df.iloc[-1]
         atr = last_row["atr"]
-        
-        # Stop Loss a 2.0 ATR por debajo (un poco más holgado para pánicos)
-        sl = entry - (2.0 * atr)
-        
-        # Protección de volatilidad: SL > 8% del entry → rechazar (pánicos extremos)
+
+        # Stop Loss
+        sl = entry - (SL_ATR_MULT * atr)
+
+        # Protección de volatilidad: SL > MAX_SL_PCT% del entry → rechazar
         sl_distance_pct = (entry - sl) / entry * 100
-        if sl_distance_pct > 8.0:
+        if sl_distance_pct > MAX_SL_PCT:
             logger.warning(
                 f"Volatilidad excesiva: SL a -{sl_distance_pct:.1f}% del entry "
-                f"(ATR={atr:.4f}). Trade RECHAZADO."
+                f"(ATR={atr:.4f}, max={MAX_SL_PCT}%). Trade RECHAZADO."
             )
             return None, None, atr
-            
-        # Take Profit a la media natural del precio (SMA 20)
-        tp = last_row["bb_mid"]
-        
-        # Si el TP está por debajo del entry (ej. tendencia cayendo agresivamente), se descarta o ajusta
-        if tp <= entry:
-             tp = entry + (1.5 * atr)  # Fallback: salida rápida segura
-             
+
+        # Take Profit
+        tp = entry + (TP_ATR_MULT * atr)
+
         return sl, tp, atr
 
-    # alias back-compat para backtest.py
+    # Alias para compatibilidad con backtest.py
     def calculate_stop_loss_and_tp(self, entry, df, side="BUY"):
         return self.calculate_sl_tp(entry, df)
-
-    # ── RSI Bearish Divergence (kept for potential future use) ────────────
-    @staticmethod
-    def _rsi_bearish_div(df: pd.DataFrame) -> bool:
-        if len(df) < 15:
-            return False
-        window = df.tail(14)
-        prices = window["close"]
-        rsis   = window["rsi"]
-        if prices.iloc[-1] > prices.iloc[:-1].max() * 0.995:
-            if rsis.iloc[-1] < rsis.iloc[:-1].max() * 0.90:
-                if rsis.iloc[-1] > 55:
-                    return True
-        return False

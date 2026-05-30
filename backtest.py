@@ -79,92 +79,68 @@ class Backtest:
 
             # Sin posición: busca entrada
             if position is None:
-                signal_1h, conds_1h = self.strategy.check_buy_signal(window)
-                
-                # Validar con MTF
-                if signal_1h or conds_1h.get('score', 0) >= 3:
-                    # Encontrar los datos de 4H disponibles hasta este momento de forma optimizada
-                    current_ts = current["timestamp"]
-                    idx_4h = df_4h_full["timestamp"].searchsorted(current_ts, side="right")
-                    df_4h_window = df_4h_full.iloc[:idx_4h]
-                    
-                    macro_conds = self.mtf.analyze_macro_trend(df_4h_window)
-                    
-                    relaxed = self.symbol in RELAXED_MACRO_SYMBOLS
-                    signal, conds = self.mtf.validate_entry_with_macro(
-                        window, macro_conds, signal_1h, conds_1h,
-                        relaxed=relaxed
-                    )
-                else:
-                    signal, conds = False, conds_1h
+                signal, conds = self.strategy.check_buy_signal(window)
 
                 if signal:
                     sl, tp, atr = self.strategy.calculate_sl_tp(price, window)
                     
-                    # Rechazo por volatilidad excesiva (ATR > 4% del entry)
+                    # Rechazo por volatilidad excesiva
                     if sl is None:
                         continue
                         
                     capital_per_trade = self.capital / MAX_OPEN_POSITIONS
-                    
-                    # Sizing simple: capital_per_trade / price
-                    regime = conds.get("regime") or conds_1h.get("regime", "NORMAL")
+                    regime = conds.get("regime", "NORMAL")
                     size_multiplier = self.strategy.get_position_size_multiplier(regime)
-                    risk_pct = RIESGO_POR_TRADE
-                    
                     qty = (capital_per_trade * size_multiplier) / price
                         
                     notional = qty * price
                     if qty > 0 and notional >= 5:
-                        # Descontar comisión de compra
                         buy_fee = notional * TRADING_FEE_RATE
                         self.total_fees += buy_fee
                         self.capital -= buy_fee
 
-                        # Resolve score: MTF combined_score > 1H score > 0 (never None)
-                        entry_score = (
-                            conds.get("combined_score")
-                            or conds.get("score")
-                            or conds_1h.get("score")
-                            or 0
-                        )
-                        entry_regime = conds.get("regime") or conds_1h.get("regime") or "NORMAL"
                         position = {
                             "entry_idx": idx, "entry": price,
-                            "qty": qty, "sl": sl, "tp": tp,
-                            "max": price, "score": entry_score,
-                            "macro": conds.get("macro_bullish", conds_1h.get("macro_bullish")),
-                            "trailing_sl": sl,
-                            "regime": entry_regime,
-                            "risk_pct": risk_pct,
+                            "qty": qty, "sl": sl, "tp": tp, "atr": atr,
+                            "max": price, "score": conds.get("score", 0),
+                            "regime": regime,
+                            "breakeven_active": False,
                         }
 
-            # Con posición: verifica salida con SL/TP FIJOS
+            # Con posición: verifica salida
             else:
                 if price > position["max"]:
                     position["max"] = price
+
+                # Breakeven: si ganancia >= 1 ATR → SL sube a entry
+                atr = position.get("atr", 0)
+                if atr > 0 and not position["breakeven_active"]:
+                    if price >= position["entry"] + atr:
+                        position["sl"] = position["entry"]
+                        position["breakeven_active"] = True
 
                 exit_p, exit_r = None, None
                 hold_time = idx - position["entry_idx"]
                 low = current["low"]
                 high = current["high"]
 
-                # Mínimo 1 vela de hold
-                if hold_time < MIN_HOLD_CANDLES:
-                    continue
-
-                # 1. Stop Loss Hit (check candle low)
+                # 1. Stop Loss (check candle low)
                 if low <= position["sl"]:
-                    exit_p = position["sl"]  # Salir al precio del SL, no al low
-                    exit_r = "Stop Loss"
+                    exit_p = position["sl"]
+                    be_tag = " (BE)" if position["breakeven_active"] else ""
+                    exit_r = f"Stop Loss{be_tag}"
 
-                # 2. Take Profit Hit (check candle high) — solo si SL no fue tocado
+                # 2. Take Profit (check candle high)
                 elif high >= position["tp"]:
-                    exit_p = position["tp"]  # Salir al precio del TP, no al high
+                    exit_p = position["tp"]
                     exit_r = "Take Profit"
 
+                # 3. Time Stop (12h = 12 velas en 1H)
+                elif hold_time >= 12:
+                    exit_p = price
+                    exit_r = "Time Stop"
+
                 if exit_p:
-                    # Descontar comisión de venta
                     sell_notional = exit_p * position["qty"]
                     sell_fee = sell_notional * TRADING_FEE_RATE
                     self.total_fees += sell_fee
@@ -176,10 +152,8 @@ class Backtest:
                         "entry": position["entry"], "exit": exit_p,
                         "qty": position["qty"], "pnl": pnl, "pct": pct,
                         "reason": exit_r, "dur": hold_time,
-                        "score": position["score"], "macro": position["macro"],
-                        "max_sl": position["max"],
+                        "score": position["score"],
                         "regime": position.get("regime", "NORMAL"),
-                        "risk_pct": position.get("risk_pct", 0.02),
                     })
                     position = None
 
