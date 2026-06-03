@@ -365,13 +365,16 @@ class TradingBot:
         if symbol not in self.entry_symbols:
             return
 
-        # ── MTF FILTER: Solo informativo para log ──
+        # ── MTF FILTER: 4H macro bloquea si tendencia bajista ──
         macro_ctx = "OK"
         if klines_4h:
             df_4h = parse_klines_to_dataframe(klines_4h)
             try:
+                macro_result = self.mtf.analyze_macro_trend(df_4h)
                 macro_ctx = self.mtf.get_macro_context(df_4h)
-                logger.info(f"{symbol} | 4H: {macro_ctx}")
+                if macro_result.get("valid", False) == False and len(df_4h) >= 210:
+                    logger.info(f"{symbol} | 4H BLOQUEA: {macro_result.get('reason', 'Macro desfavorable')}")
+                    return
             except Exception:
                 pass
 
@@ -380,7 +383,9 @@ class TradingBot:
         logger.info(
             f"{symbol} | ${last_main['close']:.4f} | "
             f"RSI={conds.get('rsi', 0):.1f} | "
-            f"score={conds.get('score', 0)}/{conds.get('min_score', 3)} | "
+            f"ADX={conds.get('adx', 0):.1f} | "
+            f"Vol={'OK' if conds.get('vol_ok') else 'LOW'} | "
+            f"score={conds.get('score', 0)}/{conds.get('min_score', 6)} | "
             f"{conds.get('regime', 'N/A')} | "
             f"Macro={macro_ctx}"
         )
@@ -400,7 +405,7 @@ class TradingBot:
             return
 
         # 2. Cooldown por símbolo
-        from config import SL_COOLDOWN_S, CONSECUTIVE_LOSS_MAX
+        from config import SL_COOLDOWN_S, CONSECUTIVE_LOSS_MAX, CONSECUTIVE_LOSS_COOLDOWN_S
 
         last_exit = self.db.get_last_exit_time(symbol)
         elapsed_since_exit = time.time() - last_exit
@@ -409,10 +414,10 @@ class TradingBot:
 
         cooldown_needed = MIN_BUY_COOLDOWN_S
         if consec_losses >= CONSECUTIVE_LOSS_MAX:
-            cooldown_needed = max(cooldown_needed, 4 * 3600)
-            logger.info(f"⚠️ {symbol} tiene {consec_losses} pérdidas seguidas. Cooldown extendido (4h).")
+            cooldown_needed = max(cooldown_needed, CONSECUTIVE_LOSS_COOLDOWN_S)  # 24h
+            logger.info(f"⚠️ {symbol} tiene {consec_losses} pérdidas seguidas. Cooldown extendido (24h).")
         elif consec_losses > 0:
-            cooldown_needed = max(cooldown_needed, SL_COOLDOWN_S)
+            cooldown_needed = max(cooldown_needed, SL_COOLDOWN_S)  # 8h
 
         elapsed_since_buy = time.time() - self.last_buy_time[symbol]
 
@@ -624,7 +629,15 @@ class TradingBot:
             exit_price  = price
             exit_reason = f"✅ Take Profit ${tp:.4f} (+{(tp/entry-1)*100:.1f}%)"
 
-        # 5. Time Stop
+        # 5. Smart Exit: salida inteligente cuando momentum colapsa
+        elif trade.get("breakeven_active", False) and price > entry:
+            exit_signal, exit_reason_text = self.strategy.exit_score(df)
+            if exit_signal <= -2:  # Señal fuerte de salida
+                pnl_pct = (price / entry - 1) * 100
+                exit_price = price
+                exit_reason = f"🧠 Smart Exit: {exit_reason_text} ({pnl_pct:+.1f}%)"
+
+        # 6. Time Stop
         elif "opened_at" in trade:
             hold_hours = (datetime.now() - trade["opened_at"]).total_seconds() / 3600
             if hold_hours >= MAX_HOLD_HOURS:

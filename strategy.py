@@ -16,6 +16,7 @@ from config import (
     ATR_PERIOD, ADX_PERIOD, ADX_MIN,
     MAX_SL_PCT, TRAILING_ACTIVATE_ATR,
     TRAILING_STEP_ATR, TRAILING_SL_OFFSET_ATR,
+    RSI_BUY_MIN, RSI_BUY_MAX,
 )
 
 logger = logging.getLogger(__name__)
@@ -207,7 +208,17 @@ class StrategySignals:
         return multipliers.get(regime, 0.5)
 
     def check_buy_signal(self, df: pd.DataFrame) -> Tuple[bool, Dict]:
-        """Estrategia de Tendencia: Cruce EMA9 > EMA21 + MACD + Price > EMA200"""
+        """
+        Estrategia Institucional de Tendencia v5.0
+        ==========================================
+        6 condiciones OBLIGATORIAS (todas AND):
+        1. Precio > EMA200 (tendencia macro alcista)
+        2. Cruce fresco EMA9 > EMA21 (momentum emergente)
+        3. MACD > Signal (confirmación de momentum)
+        4. ADX >= 22 (tendencia real, no lateral/choppy)
+        5. RSI entre 40-65 (ni sobrevendido ni sobrecomprado)
+        6. Volumen > Volumen SMA (participación institucional)
+        """
         if df is None or len(df) < 60:
             return False, {}
 
@@ -219,25 +230,28 @@ class StrategySignals:
         ema21 = last.get("ema21", close_price)
         prev_ema9 = prev.get("ema9", prev["close"])
         prev_ema21 = prev.get("ema21", prev["close"])
-        
+
         macd = last.get("macd", 0)
         macd_signal = last.get("macd_signal", 0)
-        
+
         rsi_val = last.get("rsi", 50)
         adx_val = last.get("adx", 0)
+        volume = last.get("volume", 0)
+        volume_sma = last.get("volume_sma", volume)
 
-        # Condiciones de la estrategia optimizada
-        above_ema200 = bool(close_price > ema200)
-        cruce_emas = bool(ema9 > ema21 and prev_ema9 <= prev_ema21)
-        macd_bullish = bool(macd > macd_signal)
-        
-        # Filtro opcional: ADX para confirmar tendencia
-        trend_strength = bool(adx_val >= ADX_MIN)
+        # ── 6 Condiciones OBLIGATORIAS ──
+        above_ema200  = bool(close_price > ema200)
+        cruce_emas    = bool(ema9 > ema21 and prev_ema9 <= prev_ema21)
+        macd_bullish  = bool(macd > macd_signal)
+        adx_ok        = bool(adx_val >= ADX_MIN)         # NUEVO: ADX obligatorio
+        rsi_ok        = bool(RSI_BUY_MIN <= rsi_val <= RSI_BUY_MAX)  # NUEVO: RSI filtro
+        vol_ok        = bool(volume > volume_sma)         # NUEVO: Volumen confirma
 
-        # Se requiere cruce y macd alcista por encima de EMA200
-        is_buy = above_ema200 and cruce_emas and macd_bullish
+        # Todas las 6 condiciones deben cumplirse
+        is_buy = (above_ema200 and cruce_emas and macd_bullish
+                  and adx_ok and rsi_ok and vol_ok)
 
-        score = sum([above_ema200, cruce_emas, macd_bullish, trend_strength])
+        score = sum([above_ema200, cruce_emas, macd_bullish, adx_ok, rsi_ok, vol_ok])
 
         details = {
             "close_price": close_price,
@@ -246,12 +260,16 @@ class StrategySignals:
             "ema200": round(ema200, 4),
             "rsi": round(rsi_val, 2),
             "adx": round(adx_val, 2),
+            "volume": round(volume, 2),
+            "volume_sma": round(volume_sma, 2),
             "above_ema200": above_ema200,
             "cruce_emas": cruce_emas,
             "macd_bullish": macd_bullish,
-            "trend_strength": trend_strength,
+            "adx_ok": adx_ok,
+            "rsi_ok": rsi_ok,
+            "vol_ok": vol_ok,
             "score": score,
-            "min_score": 3, # Se requieren 3 condiciones base (EMA200, Cruce, MACD)
+            "min_score": 6,  # Todas las 6 condiciones requeridas
         }
 
         regime_info = self.detect_market_regime(df)
@@ -329,36 +347,17 @@ class StrategySignals:
 
     def calculate_sl_tp(self, entry: float, df: pd.DataFrame):
         """
-        SL y TP DINÁMICOS según volatilidad (ATR percentil).
-        R:R se adapta automáticamente.
+        SL y TP con cap de seguridad.
+        SL siempre máximo 2.0 ATR. Si la volatilidad es tan alta que
+        2.0 ATR > 3% del precio, el trade se RECHAZA.
         """
         last_row = df.iloc[-1]
         atr = last_row["atr"]
-        atr_sma_20 = last_row.get("atr_sma_20", atr)
 
-        # Determinar volatilidad relativa
-        if atr_sma_20 > 0:
-            atr_ratio = atr / atr_sma_20
-        else:
-            atr_ratio = 1.0
-
-        # ATR percentil estimado basado en ratio vs SMA20
-        # < 0.7 = baja volatilidad, > 1.3 = alta volatilidad
-        if atr_ratio < 0.7:
-            # Baja volatilidad: SL más tight, TP ajustado
-            sl_mult = 1.5
-            tp_mult = 3.5
-            rr = tp_mult / sl_mult  # 2.33
-        elif atr_ratio > 1.3:
-            # Alta volatilidad: SL más amplio para no ser sacado por ruido
-            sl_mult = 3.0
-            tp_mult = 6.0
-            rr = tp_mult / sl_mult  # 2.0
-        else:
-            # Volatilidad normal
-            sl_mult = config.SL_ATR_MULT
-            tp_mult = config.TP_ATR_MULT
-            rr = tp_mult / sl_mult  # ~1.82
+        # SL FIJO a 2.0 ATR — nunca se ensancha por volatilidad alta
+        sl_mult = config.SL_ATR_MULT  # 2.0
+        tp_mult = config.TP_ATR_MULT  # 3.0
+        rr = tp_mult / sl_mult        # 1.5
 
         sl = entry - (sl_mult * atr)
         sl_distance_pct = (entry - sl) / entry * 100
@@ -366,15 +365,15 @@ class StrategySignals:
         if sl_distance_pct > MAX_SL_PCT:
             logger.warning(
                 f"Volatilidad excesiva: SL a -{sl_distance_pct:.1f}% del entry "
-                f"(ATR={atr:.4f}, atr_ratio={atr_ratio:.2f}, max={MAX_SL_PCT}%). Trade RECHAZADO."
+                f"(ATR={atr:.4f}, max={MAX_SL_PCT}%). Trade RECHAZADO."
             )
             return None, None, atr, sl_mult, tp_mult, rr
 
         tp = entry + (tp_mult * atr)
 
         logger.debug(
-            f"SL/TP dinámico: atr_ratio={atr_ratio:.2f}, "
-            f"SL={sl_mult:.1f}×ATR, TP={tp_mult:.1f}×ATR, R:R={rr:.2f}"
+            f"SL/TP: SL={sl_mult:.1f}×ATR ({sl_distance_pct:.1f}%), "
+            f"TP={tp_mult:.1f}×ATR, R:R={rr:.2f}"
         )
 
         return sl, tp, atr, sl_mult, tp_mult, rr
