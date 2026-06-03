@@ -382,10 +382,8 @@ class TradingBot:
 
         logger.info(
             f"{symbol} | ${last_main['close']:.4f} | "
-            f"RSI={conds.get('rsi', 0):.1f} | "
             f"ADX={conds.get('adx', 0):.1f} | "
-            f"Vol={'OK' if conds.get('vol_ok') else 'LOW'} | "
-            f"score={conds.get('score', 0)}/{conds.get('min_score', 6)} | "
+            f"score={conds.get('score', 0)}/{conds.get('min_score', 4)} | "
             f"{conds.get('regime', 'N/A')} | "
             f"Macro={macro_ctx}"
         )

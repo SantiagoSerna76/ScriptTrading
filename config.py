@@ -58,7 +58,7 @@ EMA_LARGO       = 50       # EMA lenta (confirmación de tendencia)
 RSI_PERIOD      = 14
 ATR_PERIOD      = 14
 ADX_PERIOD      = 14
-ADX_MIN         = 22       # AUMENTADO de 20→22: tendencia más definida
+ADX_MIN         = 20       # REDUCIDO de 22->20 para Estrategia MACD Dinámico
 
 # ─── Filtros de entrada (Trend Following 1H) ─────────────────────────────────
 RSI_BUY_MIN         = 40     # No comprar con RSI < 40 (momentum débil)
@@ -66,9 +66,9 @@ RSI_BUY_MAX         = 65     # No comprar con RSI > 65 (sobrecomprado, tarde par
 
 # ─── Stop Loss / Take Profit ─────────────────────────────────────────────────
 # R:R optimizado matemáticamente para Estrategia Institucional en 1H
-SL_ATR_MULT = 1.0
+SL_ATR_MULT = 2.0
 TP_ATR_MULT = 2.0
-# R:R efectivo = 2.0/1.0 = 2.0:1
+# R:R efectivo = 2.0/2.0 = 1:1
 
 # Máximo Stop Loss en porcentaje (protección contra volátiles)
 MAX_SL_PCT = 3.0  # REDUCIDO de 6→3%: ningún trade pierde más del 3%

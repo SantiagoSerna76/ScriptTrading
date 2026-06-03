@@ -209,67 +209,54 @@ class StrategySignals:
 
     def check_buy_signal(self, df: pd.DataFrame) -> Tuple[bool, Dict]:
         """
-        Estrategia Institucional de Tendencia v5.0
+        Estrategia MACD Dinámico v6.0
         ==========================================
-        6 condiciones OBLIGATORIAS (todas AND):
+        Busca maximizar cantidad de trades (~150/mes) manteniendo WR > 55%.
+        4 condiciones (AND):
         1. Precio > EMA200 (tendencia macro alcista)
-        2. Cruce fresco EMA9 > EMA21 (momentum emergente)
-        3. MACD > Signal (confirmación de momentum)
-        4. ADX >= 22 (tendencia real, no lateral/choppy)
-        5. RSI entre 40-65 (ni sobrevendido ni sobrecomprado)
-        6. Volumen > Volumen SMA (participación institucional)
+        2. MACD actual > Signal (momentum alcista)
+        3. MACD cruzó al alza en las últimas 2 velas (cruce fresco/temprano)
+        4. ADX >= 20 (fuerza de tendencia)
         """
         if df is None or len(df) < 60:
             return False, {}
 
         last = df.iloc[-1]
         prev = df.iloc[-2]
+        prev2 = df.iloc[-3] if len(df) > 2 else prev
+
         close_price = last["close"]
         ema200 = last.get("ema200", close_price)
         ema9 = last.get("ema9", close_price)
         ema21 = last.get("ema21", close_price)
-        prev_ema9 = prev.get("ema9", prev["close"])
-        prev_ema21 = prev.get("ema21", prev["close"])
 
         macd = last.get("macd", 0)
         macd_signal = last.get("macd_signal", 0)
+        
+        # Verificar si el MACD cruzó en la vela actual o en la anterior
+        macd_crossed_recently = bool(macd > macd_signal and prev2.get("macd", 0) <= prev2.get("macd_signal", 0))
 
-        rsi_val = last.get("rsi", 50)
         adx_val = last.get("adx", 0)
-        volume = last.get("volume", 0)
-        volume_sma = last.get("volume_sma", volume)
 
-        # ── 6 Condiciones OBLIGATORIAS ──
+        # ── Condiciones OBLIGATORIAS ──
         above_ema200  = bool(close_price > ema200)
-        cruce_emas    = bool(ema9 > ema21 and prev_ema9 <= prev_ema21)
-        macd_bullish  = bool(macd > macd_signal)
-        adx_ok        = bool(adx_val >= ADX_MIN)         # NUEVO: ADX obligatorio
-        rsi_ok        = bool(RSI_BUY_MIN <= rsi_val <= RSI_BUY_MAX)  # NUEVO: RSI filtro
-        vol_ok        = bool(volume > volume_sma)         # NUEVO: Volumen confirma
+        adx_ok        = bool(adx_val >= 20)
+        
+        is_buy = above_ema200 and macd_crossed_recently and adx_ok
 
-        # Todas las 6 condiciones deben cumplirse
-        is_buy = (above_ema200 and cruce_emas and macd_bullish
-                  and adx_ok and rsi_ok and vol_ok)
-
-        score = sum([above_ema200, cruce_emas, macd_bullish, adx_ok, rsi_ok, vol_ok])
+        score = sum([above_ema200, macd > macd_signal, macd_crossed_recently, adx_ok])
 
         details = {
             "close_price": close_price,
             "ema9": round(ema9, 4),
             "ema21": round(ema21, 4),
             "ema200": round(ema200, 4),
-            "rsi": round(rsi_val, 2),
             "adx": round(adx_val, 2),
-            "volume": round(volume, 2),
-            "volume_sma": round(volume_sma, 2),
             "above_ema200": above_ema200,
-            "cruce_emas": cruce_emas,
-            "macd_bullish": macd_bullish,
+            "macd_crossed": macd_crossed_recently,
             "adx_ok": adx_ok,
-            "rsi_ok": rsi_ok,
-            "vol_ok": vol_ok,
             "score": score,
-            "min_score": 6,  # Todas las 6 condiciones requeridas
+            "min_score": 4,  # Todas las 4 requeridas
         }
 
         regime_info = self.detect_market_regime(df)
