@@ -369,16 +369,12 @@ class TradingBot:
         if symbol not in self.entry_symbols:
             return
 
-        # ── MTF FILTER: 4H macro bloquea si tendencia bajista ──
+        # ── MTF FILTER: 4H solo informativo (NO bloquea — la estrategia validada no lo usa) ──
         macro_ctx = "OK"
         if klines_4h:
             df_4h = parse_klines_to_dataframe(klines_4h)
             try:
-                macro_result = self.mtf.analyze_macro_trend(df_4h)
                 macro_ctx = self.mtf.get_macro_context(df_4h)
-                if macro_result.get("valid", False) == False and len(df_4h) >= 210:
-                    logger.info(f"{symbol} | 4H BLOQUEA: {macro_result.get('reason', 'Macro desfavorable')}")
-                    return
             except Exception:
                 pass
 
