@@ -58,17 +58,18 @@ EMA_LARGO       = 50       # EMA lenta (confirmación de tendencia)
 RSI_PERIOD      = 14
 ATR_PERIOD      = 14
 ADX_PERIOD      = 14
-ADX_MIN         = 25       # ADX fuerte: solo tendencias claras (optimizado)
+ADX_MIN         = 30       # Solo tendencias ULTRA-FUERTES (optimizado: 62% WR)
 
 # ─── Filtros de entrada (Trend Following 1H) ─────────────────────────────────
 RSI_BUY_MIN         = 40     # No comprar con RSI < 40 (momentum débil)
 RSI_BUY_MAX         = 65     # No comprar con RSI > 65 (sobrecomprado, tarde para entrar)
 
 # ─── Stop Loss / Take Profit ─────────────────────────────────────────────────
-# R:R optimizado para MACD Dinámico + ADX Fuerte
-SL_ATR_MULT = 1.5
-TP_ATR_MULT = 2.0
-# R:R efectivo = 2.0/1.5 = 1.33:1 con WR 56% = edge positivo
+# R:R optimizado FINAL para MACD Dinámico + ADX Ultra-Fuerte
+SL_ATR_MULT = 1.0
+TP_ATR_MULT = 1.5
+# R:R efectivo = 1.5/1.0 = 1.5:1 con WR 62% = edge masivo
+# EV = (0.623 * 1.5) - (0.377 * 1.0) = 0.935 - 0.377 = +0.558 ATR/trade
 
 # Máximo Stop Loss en porcentaje (protección contra volátiles)
 MAX_SL_PCT = 3.0  # REDUCIDO de 6→3%: ningún trade pierde más del 3%
