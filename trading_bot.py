@@ -26,7 +26,11 @@ from config import (
 from binance_api import BinanceAPI, parse_klines_to_dataframe
 from strategy import StrategySignals
 from mtf_analyzer import MultiTimeframeAnalyzer
-from microstructure import OrderBookAnalyzer
+try:
+    from microstructure import OrderBookAnalyzer
+    HAS_OB = True
+except ImportError:
+    HAS_OB = False
 from database import TradeDatabase
 from notifier import TelegramNotifier
 import ml_features
@@ -67,7 +71,7 @@ class TradingBot:
         self.db       = TradeDatabase()
         self.mtf      = MultiTimeframeAnalyzer()
         self.notifier = TelegramNotifier()
-        self.ob_analyzer = OrderBookAnalyzer(API_KEY, SECRET_KEY, PROXY_URL)
+        self.ob_analyzer = OrderBookAnalyzer(API_KEY, SECRET_KEY, PROXY_URL) if HAS_OB else None
 
         # Símbolos Activos y Hot-Swap
         self.symbols = SYMBOLS.copy()
@@ -433,19 +437,18 @@ class TradingBot:
             logger.info(f"{symbol} | Trade RECHAZADO: volatilidad excesiva (SL > {MAX_SL_PCT}% del entry).")
             return
 
-        # ── Order Book Validation (microestructura) ──
-        ob_ok, ob_details = self.ob_analyzer.pre_order_check(
-            symbol, entry_price, qty_rounded if 'qty_rounded' in locals() else self.capital_per_trade / entry_price,
-            side="BUY", sell_wall_threshold="MEDIUM"
-        )
-        if not ob_ok:
-            if ob_details.get("wall_rejection"):
-                logger.info(f"{symbol} | Order Book BLOQUEA entrada: sell wall detectado.")
-            elif not ob_details.get("liquidity_ok", True):
-                logger.info(f"{symbol} | Order Book BLOQUEA entrada: liquidez insuficiente.")
-            else:
-                logger.info(f"{symbol} | Order Book BLOQUEA entrada: {ob_details.get('reason', 'microestructura desfavorable')}")
-            return
+        # ── Order Book Validation (opcional, no bloquea si falla) ──
+        if self.ob_analyzer:
+            try:
+                ob_ok, ob_details = self.ob_analyzer.pre_order_check(
+                    symbol, entry_price, self.capital_per_trade / entry_price,
+                    side="BUY", sell_wall_threshold="MEDIUM"
+                )
+                if not ob_ok:
+                    logger.info(f"{symbol} | Order Book desfavorable: {ob_details.get('reason', 'microestructura')}")
+                    return
+            except Exception as e:
+                logger.debug(f"{symbol} | OB check skip: {e}")
 
         # ── Position Sizing ───────────────────────────────────────────────────
         regime = conds.get('regime', 'NORMAL')
@@ -478,7 +481,7 @@ class TradingBot:
         logger.info(f"    Cantidad    : {qty_rounded:.6f}  (notional est. ${qty_rounded*entry_price:.2f})")
         logger.info(f"    ATR         : ${atr:.4f}")
         logger.info(f"    R:R         : {rr:.2f}")
-        logger.info(f"    Order Book  : {ob_details.get('imbalance', {}).get('sentiment', 'N/A')}")
+        logger.info(f"    ADX         : {conds.get('adx', 0):.1f}")
         logger.info(f"{'=' * 60}\n")
 
         if self.paper_trading:

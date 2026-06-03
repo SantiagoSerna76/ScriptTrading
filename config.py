@@ -35,13 +35,13 @@ STRATEGY_START_TIME = "2026-05-29T23:00:00"
 
 # ─── Capital y Riesgo ────────────────────────────────────────────────────────
 CAPITAL_TOTAL_USDT   = 500.0
-RIESGO_POR_TRADE     = 0.02    # 2% del capital por trade (se mantiene)
-MAX_OPEN_POSITIONS   = 5       # Permitir hasta 5 posiciones simultáneas ($100 c/u)
+RIESGO_POR_TRADE     = 0.015   # 1.5% del capital por trade (conservador para producción)
+MAX_OPEN_POSITIONS   = 3       # REDUCIDO de 5→3: protege contra crash correlacionado
 MIN_ORDER_NOTIONAL   = 5.0
 
 # ─── Protección diaria ───────────────────────────────────────────────────────
-MAX_DAILY_LOSS_USDT  = 10.0
-MAX_DAILY_TRADES     = 10       # Permitir más trades para 60 monedas
+MAX_DAILY_LOSS_USDT  = 15.0    # $15 max pérdida diaria (3% de $500)
+MAX_DAILY_TRADES     = 15      # 15 trades/día para 50 monedas
 
 # ─── Cooldown entre entradas ─────────────────────────────────────────────────
 MIN_BUY_COOLDOWN_H   = 2       # 2h entre mismo par
@@ -93,7 +93,7 @@ MIN_HOLD_HOURS   = 0.5     # 30 min mínimo (2 velas de 15m)
 # ─── Sistema ─────────────────────────────────────────────────────────────────
 LOG_FILE         = "trading_bot.log"
 DB_FILE          = "trades.db"
-POLLING_INTERVAL = 60      # 60s: en 15m revisamos cada minuto
+POLLING_INTERVAL = 300     # 300s (5 min): en 1H no necesitamos revisar cada minuto
 PAUSE_SIGNAL_FILE = ".bot_pause_signal"
 
 # ─── Proxy ───────────────────────────────────────────────────────────────────
