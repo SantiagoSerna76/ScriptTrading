@@ -240,7 +240,7 @@ class StrategySignals:
 
         # ── Condiciones OBLIGATORIAS ──
         above_ema200  = bool(close_price > ema200)
-        adx_ok        = bool(adx_val >= 20)
+        adx_ok        = bool(adx_val >= ADX_MIN)  # ADX >= 25 (tendencia fuerte)
         
         is_buy = above_ema200 and macd_crossed_recently and adx_ok
 
